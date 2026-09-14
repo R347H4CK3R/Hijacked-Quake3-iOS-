@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+.venv/
+build/
+dist/
+*.ipa
+*.app/
+*.ff
+*.ipak
+*.sabs
+Hijacked.zip
+source-assets/
+converted-assets/
