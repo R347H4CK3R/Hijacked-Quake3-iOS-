@@ -104,7 +104,8 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DSDL_SHARED=OFF \
             -DSDL_STATIC=ON \
-            -DSDL_TEST=OFF
+            -DSDL_TEST=OFF \
+            -DSDL_HIDAPI=OFF
           cmake --build "$RUNNER_TEMP/sdl-build" --config Release -- -quiet
           SDL_LIB="$(find "$RUNNER_TEMP/sdl-build" -type f \( -name 'libSDL2.a' -o -name 'libSDL2-static.a' \) -print -quit)"
           test -s "$SDL_LIB"
