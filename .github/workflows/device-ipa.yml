@@ -81,12 +81,28 @@ jobs:
         run: |
           PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path.home() / 'work' / '_temp' / 'Quake3-iOS' / 'Quake3' / 'qcommon' / 'files.c'
+          if not p.exists():
+              import os
+              p = Path(os.environ['RUNNER_TEMP']) / 'Quake3-iOS' / 'Quake3' / 'qcommon' / 'files.c'
+          s = p.read_text()
+          marker = 'static void FS_Startup( const char *gameName )\n'
+          prefix = '#ifdef IOS\nstatic void HijackedFsTrace(const char *message);\n#define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)\n#else\n#define HIJACKED_FS_TRACE(x) ((void)0)\n#endif\n\n'
+          if prefix not in s:
+              if s.count(marker) != 1:
+                  raise SystemExit(f'expected one FS_Startup marker, found {s.count(marker)}')
+              s = s.replace(marker, prefix + marker, 1)
+              p.write_text(s)
+          PY
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'var botMatch = true' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F '"com_standalone", "1"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
           grep -F 'Com_Init:beforeFilesystem' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
           grep -F 'Com_Init:complete' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
+          grep -F 'static void HijackedFsTrace(const char *message);' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c"
 
       - name: Stage expected baseq3 bundle resource
         run: |
