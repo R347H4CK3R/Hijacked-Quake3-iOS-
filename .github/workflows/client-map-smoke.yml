@@ -37,7 +37,9 @@ jobs:
             -DBUILD_STANDALONE=ON
           cmake --build "$RUNNER_TEMP/build" -- -j2
           CLIENT="$(find "$RUNNER_TEMP/build" -type f -perm -111 \( -name 'ioquake3*' -o -name 'iofoo3*' \) ! -name 'ioq3ded*' -print -quit)"
+          RENDERER="$(find "$RUNNER_TEMP/build" -type f -name 'renderer_opengl1.so' -print -quit)"
           test -x "$CLIENT"
+          test -s "$RENDERER"
           printf '%s\n' "$CLIENT" > "$RUNNER_TEMP/client-path.txt"
           for NAME in qagame cgame ui; do
             QVM="$(find "$RUNNER_TEMP/build" -type f -name "$NAME.qvm" -print -quit)"
@@ -69,6 +71,7 @@ jobs:
           seta vm_ui "1"
           seta bot_enable "0"
           seta s_initsound "0"
+          seta cl_renderer "opengl1"
           seta r_mode "3"
           seta r_fullscreen "0"
           EOF
@@ -91,6 +94,7 @@ jobs:
             +set vm_ui 1 \
             +set bot_enable 0 \
             +set s_initsound 0 \
+            +set cl_renderer opengl1 \
             +set r_fullscreen 0 \
             +set r_mode 3 \
             +map hijacked > "$RUNNER_TEMP/client-smoke.log" 2>&1
