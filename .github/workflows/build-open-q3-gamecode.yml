@@ -26,7 +26,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential bison flex zip
 
+      - name: Map iOS fork source layout to ioquake3 Makefile layout
+        run: |
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          test -f Quake3/cgame/cg_main.c
+          test -f Quake3/game/g_main.c
+          test -d Quake3/tools/lcc
+          test ! -e code
+          ln -s Quake3 code
+          test -f code/cgame/cg_main.c
+          test -f code/game/g_main.c
+          test -d code/tools/lcc
+
       - name: Build GPL baseq3 QVM modules only
+        env:
+          TERM: xterm
         run: |
           cd "$RUNNER_TEMP/Quake3-iOS"
           make -j2 \
