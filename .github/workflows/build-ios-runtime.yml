@@ -5,6 +5,7 @@ on:
     branches: [dev/hijacked-port]
     paths:
       - 'runtime/**'
+      - 'tools/patch_quake3_ios.py'
       - '.github/workflows/build-ios-runtime.yml'
   workflow_dispatch:
 
@@ -20,6 +21,14 @@ jobs:
           cd "$RUNNER_TEMP/Quake3-iOS"
           git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
           test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Patch runtime for deterministic Hijacked startup
+        run: |
+          PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'var botMatch = true' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
+          grep -F 'instantiateViewControllerWithIdentifier:@"HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/AppDelegate.m"
 
       - name: Prepare upstream baseq3 build resource
         run: |
