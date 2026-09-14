@@ -67,6 +67,36 @@ jobs:
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
 
+      - name: Patch simulator-only networking linkage
+        run: |
+          PBX="$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj/project.pbxproj"
+          python3 - "$PBX" <<'PY'
+          from pathlib import Path
+          import re, sys
+          p = Path(sys.argv[1])
+          s = p.read_text()
+          # The upstream iOS target links device-only cURL/OpenSSL/nghttp2 archives.
+          # Hijacked runtime smoke does not use HTTP downloads, so strip those entries
+          # from this temporary simulator project copy and compile without USE_CURL.
+          ids = (
+              'A1565FE4210A0DEF00FA9BC9',  # libcurl_iOS.a
+              'A1565FE8210A0E4A00FA9BC9',  # libssl.a (iOS)
+              'A1565FE9210A0E4A00FA9BC9',  # libcrypto.a (iOS)
+              'A1565FEB210A0E6F00FA9BC9',  # libnghttp2_iOS.a
+          )
+          for ident in ids:
+              s = re.sub(r'^\s*' + re.escape(ident) + r' /\* .*? in Frameworks \*/,\n', '', s, flags=re.M)
+          s = re.sub(r'^\s*USE_CURL,\n', '', s, flags=re.M)
+          p.write_text(s)
+          if 'USE_CURL,' in s:
+              raise SystemExit('USE_CURL remained in project settings')
+          for ident in ids:
+              # Build-file declarations may remain, but none may remain in a Frameworks list.
+              if re.search(r'^\s*' + re.escape(ident) + r' /\* .*? in Frameworks \*/,', s, re.M):
+                  raise SystemExit(f'device-only framework linkage remained: {ident}')
+          print('patched simulator networking linkage')
+          PY
+
       - name: Stage expected baseq3 bundle resource
         run: |
           BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
