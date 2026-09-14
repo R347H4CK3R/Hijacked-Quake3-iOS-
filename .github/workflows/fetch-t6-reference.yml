@@ -1,0 +1,29 @@
+name: Fetch T6 big-endian reference tools
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/fetch-t6-reference.yml'
+  workflow_dispatch:
+
+jobs:
+  package-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone WiiU T6 Studio reference
+        run: |
+          git clone --depth 1 https://github.com/tonytrawl/WiiU-T6-Studio.git ref
+      - name: Package parser reference
+        run: |
+          mkdir -p payload
+          cp -R ref/wiiu_ref payload/
+          cp -R ref/tools/ref_oat payload/
+          cp -R ref/native_linker payload/
+          printf '%s\n' "Reference source: https://github.com/tonytrawl/WiiU-T6-Studio" > payload/SOURCE.txt
+          tar -czf t6-reference.tar.gz -C payload .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t6-big-endian-reference
+          path: t6-reference.tar.gz
+          retention-days: 1
