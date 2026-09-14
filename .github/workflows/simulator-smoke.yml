@@ -11,10 +11,48 @@ on:
   workflow_dispatch:
 
 jobs:
+  qvms:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch pinned ioquake3 source
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
+      - name: Build GPL baseq3 QVMs
+        run: |
+          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+          mkdir -p "$RUNNER_TEMP/qvms/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -s "$SRC"
+            cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-qvms
+          path: ${{ runner.temp }}/qvms
+          if-no-files-found: error
+
   simulator-smoke:
+    needs: qvms
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: simulator-qvms
+          path: ${{ runner.temp }}/qvms
 
       - name: Fetch pinned Quake3-iOS runtime
         run: |
@@ -28,22 +66,6 @@ jobs:
           PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
-
-      - name: Build GPL QVMs
-        run: |
-          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
-          cd "$RUNNER_TEMP/ioq3"
-          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
-          cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_CLIENT=OFF \
-            -DBUILD_SERVER=OFF \
-            -DBUILD_RENDERER_GL1=OFF \
-            -DBUILD_RENDERER_GL2=OFF \
-            -DBUILD_GAME_LIBRARIES=OFF \
-            -DBUILD_GAME_QVMS=ON \
-            -DBUILD_STANDALONE=ON
-          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
 
       - name: Build simulator app
         run: |
@@ -67,7 +89,7 @@ jobs:
           APP="$(cat "$RUNNER_TEMP/app-path.txt")"
           mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
           for NAME in qagame cgame ui; do
-            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            SRC="$RUNNER_TEMP/qvms/vm/$NAME.qvm"
             test -s "$SRC"
             cp "$SRC" "$APP/baseq3/vm/$NAME.qvm"
           done
@@ -108,7 +130,6 @@ jobs:
         if: always()
         run: |
           UDID="$(cat "$RUNNER_TEMP/sim-udid.txt" 2>/dev/null || true)"
-          BUNDLE_ID="$(cat "$RUNNER_TEMP/bundle-id.txt" 2>/dev/null || true)"
           if [ -n "$UDID" ]; then
             xcrun simctl spawn "$UDID" log show --last 2m --style compact \
               --predicate 'process == "Quake3-iOS" OR eventMessage CONTAINS[c] "Quake3-iOS"' \
