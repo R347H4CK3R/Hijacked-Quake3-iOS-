@@ -121,11 +121,73 @@ def patch_app_delegate(source: str) -> str:
     return source
 
 
+def patch_sys_main(source: str) -> str:
+    header = '''#ifdef IOS\nvoid Sys_Startup( int argc, char **argv )\n#else\nint main( int argc, char **argv )\n#endif // IOS'''
+    helper = '''#ifdef IOS\nstatic void HijackedEngineTrace(const char *message)\n{\n    const char *home = Sys_DefaultHomePath();\n    char path[MAX_OSPATH];\n    FILE *f;\n\n    if (!home || !*home || !message)\n        return;\n\n    snprintf(path, sizeof(path), "%sHijackedLaunchTrace.txt", home);\n    f = fopen(path, "a");\n    if (!f)\n        return;\n\n    fprintf(f, "%s\\n", message);\n    fclose(f);\n}\n#endif\n\n''' + header
+    source = _replace_once(source, header, helper, "Sys_Startup trace helper")
+    source = _replace_once_if_present(
+        source,
+        'char  commandLine[ MAX_STRING_CHARS ] = { 0 };',
+        'char  commandLine[ MAX_STRING_CHARS ] = { 0 };\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:entered");\n#endif',
+        "Sys_Startup entered breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'SDL_GetVersion( &ver );',
+        'SDL_GetVersion( &ver );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterSDLVersion");\n#endif',
+        "SDL version breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Sys_PlatformInit( );',
+        'Sys_PlatformInit( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterPlatformInit");\n#endif',
+        "platform init breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Sys_Milliseconds( );',
+        'Sys_Milliseconds( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterMilliseconds");\n#endif',
+        "milliseconds breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Sys_ParseArgs( argc, argv );',
+        'Sys_ParseArgs( argc, argv );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterParseArgs");\n#endif',
+        "parse args breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );',
+        'Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterBinaryPath");\n#endif',
+        "binary path breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );',
+        'Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterInstallPath");\n#endif',
+        "install path breadcrumb",
+    )
+    source = _replace_once_if_present(
+        source,
+        'CON_Init( );\n\tCom_Init( commandLine );\n\tNET_Init( );',
+        'CON_Init( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterConsoleInit");\n\tHijackedEngineTrace("Sys_Startup:beforeComInit");\n#endif\n\tCom_Init( commandLine );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterComInit");\n#endif\n\tNET_Init( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterNetInit");\n#endif',
+        "engine init breadcrumbs",
+    )
+    source = _replace_once_if_present(
+        source,
+        'while( 1 )',
+        '#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:firstFrame");\n#endif\n\twhile( 1 )',
+        "first frame breadcrumb",
+    )
+    return source
+
+
 def patch_runtime(root: Path) -> None:
     targets = (
         (root / "Quake3-iOS" / "GameViewController.swift", patch_game_view_controller),
         (root / "Quake3-iOS" / "Base.lproj" / "Main.storyboard", patch_storyboard),
         (root / "Quake3-iOS" / "AppDelegate.m", patch_app_delegate),
+        (root / "Quake3" / "sys" / "sys_main.c", patch_sys_main),
     )
     patched_text: dict[str, str] = {}
     for path, patcher in targets:
@@ -138,6 +200,7 @@ def patch_runtime(root: Path) -> None:
 
     game = patched_text["GameViewController.swift"]
     delegate = patched_text["AppDelegate.m"]
+    engine = patched_text["sys_main.c"]
     required_game = (
         'HijackedLaunchTrace.txt',
         'hijackedTrace("GameViewController.viewDidLoad")',
@@ -150,12 +213,22 @@ def patch_runtime(root: Path) -> None:
         'HijackedTrace(@"postFinishLaunch:begin")',
         'HijackedTrace(@"postFinishLaunch:windowVisible")',
     )
+    required_engine = (
+        'static void HijackedEngineTrace',
+        'HijackedEngineTrace("Sys_Startup:entered")',
+        'HijackedEngineTrace("Sys_Startup:beforeComInit")',
+        'HijackedEngineTrace("Sys_Startup:afterComInit")',
+        'HijackedEngineTrace("Sys_Startup:firstFrame")',
+    )
     for marker in required_game:
         if marker not in game:
             raise ValueError(f"real GameViewController missing required breadcrumb marker: {marker}")
     for marker in required_delegate:
         if marker not in delegate:
             raise ValueError(f"real AppDelegate missing required breadcrumb marker: {marker}")
+    for marker in required_engine:
+        if marker not in engine:
+            raise ValueError(f"real sys_main.c missing required breadcrumb marker: {marker}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("runtime_root", type=Path)
     args = parser.parse_args(argv)
     patch_runtime(args.runtime_root)
-    print("patched Quake3-iOS for deterministic Hijacked startup with bundled baseq3 paths and breadcrumbs")
+    print("patched Quake3-iOS for deterministic Hijacked startup with bundled baseq3 paths and native breadcrumbs")
     return 0
 
 
