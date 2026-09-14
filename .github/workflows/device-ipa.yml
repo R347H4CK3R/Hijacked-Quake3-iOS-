@@ -6,7 +6,7 @@ on:
     paths:
       - '.github/workflows/device-ipa.yml'
       - 'tools/patch_quake3_ios.py'
-      - 'tests/fixtures/hijacked-smoke.bsp.base64'
+      - 'runtime/hijacked-device.bsp.zlib.b64'
       - 'runtime/HijackedConfig.cfg'
   workflow_dispatch:
 
@@ -68,13 +68,14 @@ jobs:
         run: |
           PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'var botMatch = true' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
 
       - name: Stage expected baseq3 bundle resource
         run: |
           BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
           mkdir -p "$BASEQ3"
-          printf '// CI staging placeholder; Hijacked data is injected after build.\n' > "$BASEQ3/ci-placeholder.cfg"
+          printf '// CI staging placeholder; verified Hijacked data is injected after build.\n' > "$BASEQ3/ci-placeholder.cfg"
           test -d "$BASEQ3"
 
       - name: Build unsigned arm64 iPhone app
@@ -109,7 +110,7 @@ jobs:
           file "$APP/Quake3-iOS"
           xcrun lipo -info "$APP/Quake3-iOS" || true
 
-      - name: Inject standalone gamecode and Hijacked map
+      - name: Inject interpreted QVMs and verified Hijacked BSP
         run: |
           APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
           mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
@@ -122,31 +123,72 @@ jobs:
           cat > "$APP/baseq3/default.cfg" <<'EOF'
           seta com_introplayed "1"
           seta sv_pure "0"
-          seta vm_game "0"
-          seta vm_cgame "0"
-          seta vm_ui "0"
+          seta vm_game "1"
+          seta vm_cgame "1"
+          seta vm_ui "1"
           seta com_maxfps "60"
           seta r_fullscreen "1"
           EOF
           cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
-          /usr/bin/base64 -D \
-            -i tests/fixtures/hijacked-smoke.bsp.base64 \
-            -o "$APP/baseq3/maps/hijacked.bsp"
+          export BSP_OUT="$APP/baseq3/maps/hijacked.bsp"
+          python3 - <<'PY'
+          import base64, hashlib, os, struct, zlib
+          from pathlib import Path
+
+          source = Path('runtime/hijacked-device.bsp.zlib.b64')
+          encoded = ''.join(source.read_text(encoding='utf-8').split())
+          data = zlib.decompress(base64.b64decode(encoded))
+          if data[:4] != b'IBSP':
+              raise SystemExit(f'bad BSP magic: {data[:4]!r}')
+          version = struct.unpack_from('<i', data, 4)[0]
+          if version != 46:
+              raise SystemExit(f'bad BSP version: {version}')
+          def lump(index):
+              return struct.unpack_from('<ii', data, 8 + index * 8)
+          for index in range(17):
+              offset, length = lump(index)
+              if offset < 0 or length < 0 or offset + length > len(data):
+                  raise SystemExit(f'invalid BSP lump {index}: {offset}+{length}>{len(data)}')
+          _, drawvert_bytes = lump(10)
+          _, meshvert_bytes = lump(11)
+          _, face_bytes = lump(13)
+          drawverts = drawvert_bytes // 44
+          meshverts = meshvert_bytes // 4
+          faces = face_bytes // 104
+          entity_offset, entity_length = lump(0)
+          entities = data[entity_offset:entity_offset + entity_length]
+          if drawverts < 500 or meshverts < 500 or faces < 1:
+              raise SystemExit(f'Hijacked BSP geometry too small: dv={drawverts} mv={meshverts} faces={faces}')
+          if b'info_player_deathmatch' not in entities:
+              raise SystemExit('Hijacked BSP has no multiplayer spawn entities')
+          output = Path(os.environ['BSP_OUT'])
+          output.write_bytes(data)
+          print(f'Hijacked BSP bytes={len(data)} drawverts={drawverts} meshverts={meshverts} faces={faces} sha256={hashlib.sha256(data).hexdigest()}')
+          PY
           test -s "$APP/baseq3/maps/hijacked.bsp"
+          grep -F 'seta vm_game "1"' "$APP/baseq3/default.cfg"
+          grep -F 'seta vm_cgame "1"' "$APP/baseq3/default.cfg"
+          grep -F 'seta vm_ui "1"' "$APP/baseq3/default.cfg"
           test -s "$APP/baseq3/vm/qagame.qvm"
           test -s "$APP/baseq3/vm/cgame.qvm"
           test -s "$APP/baseq3/vm/ui.qvm"
 
-      - name: Package unsigned IPA
+      - name: Package and verify unsigned IPA
         run: |
           APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
           /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa" Payload
-          test -s "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa"
-          unzip -l "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa" | grep -F 'Payload/Quake3-iOS.app/Quake3-iOS'
-          file "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa"
+          IPA="$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa"
+          test -s "$IPA"
+          unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/Quake3-iOS'
+          unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
+          unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/cgame.qvm'
+          unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/ui.qvm'
+          unzip -p "$IPA" 'Payload/Quake3-iOS.app/baseq3/default.cfg' | grep -F 'seta vm_game "1"'
+          file "$IPA"
 
       - uses: actions/upload-artifact@v4
         with:
