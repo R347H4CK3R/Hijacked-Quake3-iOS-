@@ -43,5 +43,19 @@
       "UNKNOWN_60": 7
     }
   },
+  "gfxworld": {
+    "decoded_offset": 22967056,
+    "decoded_offset_hex": "0x15E7310",
+    "plane_count": 5570,
+    "node_count": 19219,
+    "surface_count": 2366,
+    "cell_count": 37,
+    "reflection_probe_count": 19,
+    "lightmap_count": 1,
+    "vertex_count": 109415,
+    "vertex_data_size0": 888912,
+    "vertex_data_size1": 1967176,
+    "index_count": 232677
+  },
   "copyrighted_payload_committed": false
 }
