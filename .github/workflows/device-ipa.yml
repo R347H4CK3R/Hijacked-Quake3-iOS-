@@ -1,4 +1,4 @@
-# Triggered after native Sys_Startup instrumentation update.
+# Triggered after standalone Com_Init startup fix.
 name: Unsigned iPhone IPA
 
 on:
@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/device-ipa.yml'
       - 'tools/patch_quake3_ios.py'
+      - 'tools/patch_com_init_ios.py'
       - 'runtime/hijacked-device.bsp.zlib.b64'
       - 'runtime/HijackedConfig.cfg'
   workflow_dispatch:
@@ -79,9 +80,13 @@ jobs:
       - name: Patch deterministic Hijacked startup
         run: |
           PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'var botMatch = true' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F '"com_standalone", "1"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
+          grep -F 'Com_Init:beforeFilesystem' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
+          grep -F 'Com_Init:complete' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
 
       - name: Stage expected baseq3 bundle resource
         run: |
