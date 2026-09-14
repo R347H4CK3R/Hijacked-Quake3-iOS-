@@ -5,7 +5,17 @@ import argparse
 import hashlib
 import json
 
-from tools.q3.export import build_map_text, build_mtl_text, build_pk3, build_shader_text, write_obj
+from tools.q3.export import (
+    COLLISION_SHADER,
+    VISUAL_SHADER,
+    build_common_shader_text,
+    build_map_text,
+    build_mtl_text,
+    build_pk3,
+    build_shader_text,
+    build_shaderlist_text,
+    write_obj,
+)
 from tools.t6ps3.clipmesh import CollisionMeshView, locate_collision_mesh
 from tools.t6ps3.fastfile_decode import decode_fastfile_bytes
 from tools.t6ps3.mapents import MapEntsView, locate_mapents
@@ -54,11 +64,29 @@ def write_stage(
     maps_dir.mkdir(parents=True, exist_ok=True)
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
-    obj_path = model_dir / "hijacked_collision.obj"
-    with obj_path.open("w", encoding="utf-8", newline="\n") as stream:
+    collision_obj_path = model_dir / "hijacked_collision.obj"
+    with collision_obj_path.open("w", encoding="utf-8", newline="\n") as stream:
         write_obj(data, mesh, stream)
-    (model_dir / "hijacked_collision.mtl").write_text(build_mtl_text(), encoding="utf-8")
+    (model_dir / "hijacked_collision.mtl").write_text(
+        build_mtl_text(COLLISION_SHADER), encoding="utf-8"
+    )
+
+    visual_obj_path = model_dir / "hijacked_visual.obj"
+    with visual_obj_path.open("w", encoding="utf-8", newline="\n") as stream:
+        write_obj(
+            data,
+            mesh,
+            stream,
+            shader=VISUAL_SHADER,
+            mtllib="hijacked_visual.mtl",
+        )
+    (model_dir / "hijacked_visual.mtl").write_text(
+        build_mtl_text(VISUAL_SHADER), encoding="utf-8"
+    )
+
     (scripts_dir / "hijacked.shader").write_text(build_shader_text(), encoding="utf-8")
+    (scripts_dir / "common.shader").write_text(build_common_shader_text(), encoding="utf-8")
+    (scripts_dir / "shaderlist.txt").write_text(build_shaderlist_text(), encoding="utf-8")
     (maps_dir / "hijacked.map").write_text(
         build_map_text(mapents, mins=mesh.mins, maxs=mesh.maxs),
         encoding="utf-8",
@@ -72,7 +100,9 @@ def write_stage(
         "degenerate_triangles": mesh.degenerate_triangles,
         "dm_spawns": dm_spawns,
         "tdm_spawns": tdm_spawns,
-        "obj_bytes": obj_path.stat().st_size,
+        "obj_bytes": collision_obj_path.stat().st_size,
+        "collision_obj_bytes": collision_obj_path.stat().st_size,
+        "visual_obj_bytes": visual_obj_path.stat().st_size,
     }
     (out_dir / "hijacked-stage-report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
