@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install NetRadiant build dependencies
         run: |
           sudo apt-get update
@@ -44,80 +47,53 @@ jobs:
           test -n "$JPEG_LIB"
           cp -L "$JPEG_LIB" "$RUNNER_TEMP/q3map2-artifact/lib/libjpeg.so.8"
           ldd "$Q3MAP2"
-      - name: Create open-source smoke map and OBJ clip model
+      - name: Generate synthetic stage through the real exporter
+        run: |
+          ROOT="$RUNNER_TEMP/q3smoke/baseq3"
+          mkdir -p "$ROOT"
+          PYTHONPATH=. ROOT="$ROOT" python - <<'PY'
+          import os
+          from pathlib import Path
+          import struct
+
+          from tools.build_hijacked_q3 import write_stage
+          from tools.t6ps3.clipmesh import CollisionMeshView
+          from tools.t6ps3.mapents import MapEntsView
+
+          data = bytearray()
+          for vertex in ((-32.0, -32.0, 0.0), (32.0, -32.0, 0.0), (0.0, 32.0, 64.0)):
+              data += struct.pack(">3f", *vertex)
+          index_offset = len(data)
+          data += struct.pack(">3H", 0, 1, 2)
+          mesh = CollisionMeshView(
+              0,
+              index_offset,
+              3,
+              1,
+              0,
+              (-32.0, -32.0, 0.0),
+              (32.0, 32.0, 64.0),
+          )
+          mapents = MapEntsView(
+              0,
+              0,
+              0,
+              "",
+              ({"classname": "mp_dm_spawn", "origin": "0 0 32", "angles": "0 90 0"},),
+          )
+          write_stage(bytes(data), mesh, mapents, Path(os.environ["ROOT"]))
+          PY
+      - name: Compile and validate synthetic dual-model BSP
         run: |
           ROOT="$RUNNER_TEMP/q3smoke"
-          mkdir -p "$ROOT/baseq3/maps" "$ROOT/baseq3/scripts" "$ROOT/baseq3/models/hijacked"
-          cat > "$ROOT/baseq3/scripts/shaderlist.txt" <<'EOF'
-          common
-          hijacked
-          EOF
-          cat > "$ROOT/baseq3/scripts/common.shader" <<'EOF'
-          textures/common/caulk
-          {
-            surfaceparm nodraw
-            surfaceparm nomarks
-          }
-          EOF
-          cat > "$ROOT/baseq3/scripts/hijacked.shader" <<'EOF'
-          textures/hijacked/collision
-          {
-            q3map_clipModel
-            surfaceparm solid
-            surfaceparm nolightmap
-            {
-              map $whiteimage
-              rgbGen const ( 0.55 0.62 0.68 )
-            }
-          }
-          EOF
-          cat > "$ROOT/baseq3/models/hijacked/hijacked_collision.mtl" <<'EOF'
-          newmtl textures/hijacked/collision
-          Kd 0.55 0.62 0.68
-          EOF
-          cat > "$ROOT/baseq3/models/hijacked/hijacked_collision.obj" <<'EOF'
-          mtllib hijacked_collision.mtl
-          usemtl textures/hijacked/collision
-          v -32 -32 0
-          v 32 -32 0
-          v 32 32 0
-          v -32 32 0
-          v 0 0 64
-          f 1 2 5
-          f 2 3 5
-          f 3 4 5
-          f 4 1 5
-          f 4 3 2
-          f 4 2 1
-          EOF
-          cat > "$ROOT/baseq3/maps/smoke.map" <<'EOF'
-          {
-          "classname" "worldspawn"
-          {
-          ( -128 -128 -64 ) ( -128 128 -64 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
-          ( 128 128 128 ) ( -128 128 128 ) ( -128 -128 128 ) textures/common/caulk 0 0 0 1 1
-          ( -128 -128 -64 ) ( 128 -128 -64 ) ( 128 -128 128 ) textures/common/caulk 0 0 0 1 1
-          ( -128 128 128 ) ( 128 128 128 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
-          ( -128 -128 -64 ) ( -128 -128 128 ) ( -128 128 128 ) textures/common/caulk 0 0 0 1 1
-          ( 128 128 128 ) ( 128 -128 128 ) ( 128 -128 -64 ) textures/common/caulk 0 0 0 1 1
-          }
-          }
-          {
-          "classname" "misc_model"
-          "model" "models/hijacked/hijacked_collision.obj"
-          "spawnflags" "2"
-          }
-          {
-          "classname" "info_player_deathmatch"
-          "origin" "0 0 32"
-          }
-          EOF
-      - name: Compile synthetic OBJ-backed BSP
-        run: |
           Q3MAP2="$RUNNER_TEMP/q3map2-artifact/q3map2"
-          "$Q3MAP2" -game quake3 -fs_basepath "$RUNNER_TEMP/q3smoke" -fs_game baseq3 -bsp "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.map"
-          test -s "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.bsp"
-          ls -lh "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.bsp"
+          LD_LIBRARY_PATH="$RUNNER_TEMP/q3map2-artifact/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            "$Q3MAP2" -game quake3 -fs_basepath "$ROOT" -fs_game baseq3 \
+            -bsp "$ROOT/baseq3/maps/hijacked.map"
+          PYTHONPATH=. python -m tools.q3.bsp \
+            "$ROOT/baseq3/maps/hijacked.bsp" \
+            --min-brushes 7 --min-drawverts 3 --min-drawfaces 1
+          ls -lh "$ROOT/baseq3/maps/hijacked.bsp"
       - uses: actions/upload-artifact@v4
         with:
           name: q3map2-linux-x64-portable
