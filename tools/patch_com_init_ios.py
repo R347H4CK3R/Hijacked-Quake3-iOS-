@@ -59,6 +59,11 @@ static void HijackedComTrace(const char *message)
 void Com_Init( char *commandLine ) {'''
     source = replace_once(source, old_header, new_header, "Com_Init header")
 
+    start = source.index("void Com_Init( char *commandLine ) {")
+    end_marker = "\n}\n\n/*\n===============\nCom_ReadFromPipe"
+    end = source.index(end_marker, start) + 2
+    block = source[start:end]
+
     replacements = (
         ('\tchar\t*s;\n\tint\tqport;\n\n\tCom_Printf(',
          '\tchar\t*s;\n\tint\tqport;\n\n\tHIJACKED_COM_TRACE("Com_Init:entered");\n\tCom_Printf('),
@@ -88,7 +93,9 @@ void Com_Init( char *commandLine ) {'''
     )
 
     for index, (old, new) in enumerate(replacements, 1):
-        source = replace_once(source, old, new, f"Com_Init stage {index}")
+        block = replace_once(block, old, new, f"Com_Init stage {index}")
+
+    source = source[:start] + block + source[end:]
 
     required = (
         'HijackedComTrace',
