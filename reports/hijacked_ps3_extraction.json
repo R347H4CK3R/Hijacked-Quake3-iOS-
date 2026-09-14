@@ -1,0 +1,30 @@
+{
+  "map": "mp_hijacked",
+  "source": "user-supplied PS3 T6 fastfile",
+  "decoded_bytes": 52391343,
+  "xasset_count": 883,
+  "gfxworld": {
+    "surface_count": 2366,
+    "vertex_count": 109415,
+    "index_count": 232677
+  },
+  "collision": {
+    "vertex_offset": 35832497,
+    "index_offset": 36085721,
+    "vertex_count": 21102,
+    "triangle_count": 31517,
+    "degenerate_triangles": 0,
+    "mins": [-43008.0, -30721.0, -315.0],
+    "maxs": [26624.0, 46336.0, 311.5979919433594],
+    "vertex_sha256": "03d3194b3e7ff619844472620330dcd847980cb5f036d412f0b3eda04aaf2583",
+    "index_sha256": "95346b0f4373061e6facc7912dc23343bb02a6fbb3ce57460ed8d9df95014aee"
+  },
+  "mapents": {
+    "root_offset": 36791715,
+    "num_entity_chars": 129525,
+    "entity_count": 1060,
+    "dm_spawns": 30,
+    "tdm_spawns": 31,
+    "entity_sha256": "de883669b3e4d878b55f942fad1d612380465912fdc9732219d3d8c47e1f3027"
+  }
+}
