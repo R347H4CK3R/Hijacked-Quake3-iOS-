@@ -99,6 +99,7 @@ jobs:
           python3 - "$RUNNER_TEMP/SDL-2.0.14" <<'PY'
           from pathlib import Path
           import sys
+
           root = Path(sys.argv[1])
           changed = 0
           for p in root.rglob('*'):
@@ -109,12 +110,27 @@ jobs:
               except UnicodeDecodeError:
                   continue
               if '-Werror=declaration-after-statement' in s:
-                  s2 = s.replace('-Werror=declaration-after-statement', '-Wno-error=declaration-after-statement')
-                  p.write_text(s2)
+                  p.write_text(s.replace('-Werror=declaration-after-statement', '-Wno-error=declaration-after-statement'))
                   changed += 1
           print(f'patched SDL warning policy in {changed} file(s)')
           if changed == 0:
               raise SystemExit('expected SDL warning policy flag was not found')
+
+          cmake = root / 'CMakeLists.txt'
+          s = cmake.read_text()
+          old_misc = '  file(GLOB MISC_SOURCES ${SDL2_SOURCE_DIR}/src/misc/macosx/*.m)\n  set(SOURCE_FILES ${SOURCE_FILES} ${MISC_SOURCES})\n  set(HAVE_SDL_MISC TRUE)'
+          new_misc = '  if(IOS OR TVOS)\n    file(GLOB MISC_SOURCES ${SDL2_SOURCE_DIR}/src/misc/dummy/*.c)\n  else()\n    file(GLOB MISC_SOURCES ${SDL2_SOURCE_DIR}/src/misc/macosx/*.m)\n  endif()\n  set(SOURCE_FILES ${SOURCE_FILES} ${MISC_SOURCES})\n  set(HAVE_SDL_MISC TRUE)'
+          if old_misc not in s:
+              raise SystemExit('expected SDL macOS misc block was not found')
+          s = s.replace(old_misc, new_misc, 1)
+
+          old_locale = '  if(SDL_LOCALE)\n    file(GLOB LOCALE_SOURCES ${SDL2_SOURCE_DIR}/src/locale/macosx/*.m)\n    set(SOURCE_FILES ${SOURCE_FILES} ${LOCALE_SOURCES})\n    set(HAVE_SDL_LOCALE TRUE)\n  endif()'
+          new_locale = '  if(SDL_LOCALE)\n    if(IOS OR TVOS)\n      file(GLOB LOCALE_SOURCES ${SDL2_SOURCE_DIR}/src/locale/dummy/*.c)\n    else()\n      file(GLOB LOCALE_SOURCES ${SDL2_SOURCE_DIR}/src/locale/macosx/*.m)\n    endif()\n    set(SOURCE_FILES ${SOURCE_FILES} ${LOCALE_SOURCES})\n    set(HAVE_SDL_LOCALE TRUE)\n  endif()'
+          if old_locale not in s:
+              raise SystemExit('expected SDL macOS locale block was not found')
+          s = s.replace(old_locale, new_locale, 1)
+          cmake.write_text(s)
+          print('patched SDL Apple misc/locale source selection for iOS')
           PY
           cmake -S "$RUNNER_TEMP/SDL-2.0.14" -B "$RUNNER_TEMP/sdl-build" -G Xcode \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
