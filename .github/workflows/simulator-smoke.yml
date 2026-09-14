@@ -70,6 +70,7 @@ jobs:
       - name: Build simulator app
         run: |
           DERIVED="$RUNNER_TEMP/DerivedData"
+          set +e
           xcodebuild \
             -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
             -scheme Quake3-iOS \
@@ -78,7 +79,16 @@ jobs:
             -derivedDataPath "$DERIVED" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build
+            build > "$RUNNER_TEMP/xcodebuild.log" 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            echo '=== Xcode compiler/linker diagnostics ==='
+            grep -nE 'error:|fatal error:|Undefined symbols|ld: |BUILD FAILED|Command .* failed' "$RUNNER_TEMP/xcodebuild.log" | tail -150 || true
+            echo '=== End diagnostics ==='
+            exit "$STATUS"
+          fi
+          tail -40 "$RUNNER_TEMP/xcodebuild.log"
           APP="$(find "$DERIVED/Build/Products" -type d -name 'Quake3-iOS.app' | head -1)"
           test -n "$APP"
           printf '%s\n' "$APP" > "$RUNNER_TEMP/app-path.txt"
@@ -148,6 +158,7 @@ jobs:
         with:
           name: simulator-smoke-logs
           path: |
+            ${{ runner.temp }}/xcodebuild.log
             ${{ runner.temp }}/launch.txt
             ${{ runner.temp }}/runtime.log
             ${{ runner.temp }}/ps.txt
