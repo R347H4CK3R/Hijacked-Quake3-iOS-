@@ -8,6 +8,8 @@ class GameViewController: UIViewController {
     var botMatch = false
     let defaults = UserDefaults()
     func launch() {
+        let documentsDir = "/tmp/Documents"
+        Sys_SetHomeDir(documentsDir)
         var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName")]
     }
 }
@@ -16,6 +18,8 @@ class GameViewController: UIViewController {
     assert 'var selectedMap = "hijacked"' in patched
     assert 'var botMatch = true' in patched
     assert 'self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"' in patched
+    assert '"+set", "fs_basepath", Bundle.main.resourcePath!' in patched
+    assert '"+set", "fs_homepath", documentsDir' in patched
 
 
 def test_storyboard_assigns_hijacked_game_identifier():
