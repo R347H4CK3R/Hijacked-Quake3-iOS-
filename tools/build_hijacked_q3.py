@@ -2,12 +2,41 @@ from __future__ import annotations
 
 from pathlib import Path
 import argparse
+import hashlib
 import json
 
 from tools.q3.export import build_map_text, build_mtl_text, build_pk3, build_shader_text, write_obj
 from tools.t6ps3.clipmesh import CollisionMeshView, locate_collision_mesh
 from tools.t6ps3.fastfile_decode import decode_fastfile_bytes
 from tools.t6ps3.mapents import MapEntsView, locate_mapents
+
+KNOWN_HIJACKED_DECODED_SHA256 = "f93655577fac1916c542f351dc908886290b51a14cfaae39c58aa0fc10002ffa"
+KNOWN_HIJACKED_VERTEX_SHA256 = "03d3194b3e7ff619844472620330dcd847980cb5f036d412f0b3eda04aaf2583"
+KNOWN_HIJACKED_INDEX_SHA256 = "95346b0f4373061e6facc7912dc23343bb02a6fbb3ce57460ed8d9df95014aee"
+KNOWN_HIJACKED_MESH = CollisionMeshView(
+    vertex_offset=35_832_497,
+    index_offset=36_085_721,
+    vertex_count=21_102,
+    triangle_count=31_517,
+    degenerate_triangles=0,
+    mins=(-43_008.0, -30_721.0, -315.0),
+    maxs=(26_624.0, 46_336.0, 311.5979919433594),
+)
+
+
+def _verified_known_hijacked_mesh(data: bytes, decoded_sha256: str) -> CollisionMeshView | None:
+    if decoded_sha256 != KNOWN_HIJACKED_DECODED_SHA256:
+        return None
+    mesh = KNOWN_HIJACKED_MESH
+    vertex_bytes = data[mesh.vertex_offset : mesh.vertex_offset + mesh.vertex_count * 12]
+    index_bytes = data[mesh.index_offset : mesh.index_offset + mesh.triangle_count * 6]
+    if len(vertex_bytes) != mesh.vertex_count * 12 or len(index_bytes) != mesh.triangle_count * 6:
+        raise ValueError("known Hijacked collision slices are truncated")
+    if hashlib.sha256(vertex_bytes).hexdigest() != KNOWN_HIJACKED_VERTEX_SHA256:
+        raise ValueError("known Hijacked collision vertex hash mismatch")
+    if hashlib.sha256(index_bytes).hexdigest() != KNOWN_HIJACKED_INDEX_SHA256:
+        raise ValueError("known Hijacked collision index hash mismatch")
+    return mesh
 
 
 def write_stage(
@@ -67,7 +96,11 @@ def build_from_fastfile_bytes(
         raise ValueError("decoded fastfile is missing the 40-byte XFile header")
 
     data = decoded[40:]
-    mesh = locate_collision_mesh(data)
+    mesh = _verified_known_hijacked_mesh(data, decode_report.decoded_sha256)
+    mesh_source = "verified-profile"
+    if mesh is None:
+        mesh = locate_collision_mesh(data)
+        mesh_source = "discovery-scan"
     mapents = locate_mapents(data)
     report = write_stage(data, mesh, mapents, out_dir, source_pk3=source_pk3)
     report.update(
@@ -78,6 +111,7 @@ def build_from_fastfile_bytes(
             "decoded_sha256": decode_report.decoded_sha256,
             "xchunk_count": decode_report.chunk_count,
             "map_entity_count": len(mapents.entities),
+            "collision_mesh_source": mesh_source,
         }
     )
     (out_dir / "hijacked-stage-report.json").write_text(
