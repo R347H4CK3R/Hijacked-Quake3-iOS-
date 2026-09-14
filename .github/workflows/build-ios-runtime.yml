@@ -10,10 +10,52 @@ on:
   workflow_dispatch:
 
 jobs:
+  qvms:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch pinned ioquake3 source
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
+
+      - name: Build GPL baseq3 QVMs
+        run: |
+          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+          mkdir -p "$RUNNER_TEMP/qvms/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -n "$SRC"
+            test -s "$SRC"
+            cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+          done
+          sha256sum "$RUNNER_TEMP/qvms/vm/"*.qvm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-runtime-qvms
+          path: ${{ runner.temp }}/qvms
+          if-no-files-found: error
+
   build-ios:
+    needs: qvms
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-runtime-qvms
+          path: ${{ runner.temp }}/qvms
 
       - name: Fetch pinned Quake3-iOS runtime
         run: |
@@ -30,30 +72,12 @@ jobs:
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
           grep -F 'instantiateViewControllerWithIdentifier:@"HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/AppDelegate.m"
 
-      - name: Build GPL baseq3 QVMs
-        run: |
-          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
-          cd "$RUNNER_TEMP/ioq3"
-          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
-          test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
-          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_CLIENT=OFF \
-            -DBUILD_SERVER=OFF \
-            -DBUILD_RENDERER_GL1=OFF \
-            -DBUILD_RENDERER_GL2=OFF \
-            -DBUILD_GAME_LIBRARIES=OFF \
-            -DBUILD_GAME_QVMS=ON \
-            -DBUILD_STANDALONE=ON
-          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
-
       - name: Prepare standalone baseq3 build resource
         run: |
           BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
           mkdir -p "$BASEQ3/vm"
           for NAME in qagame cgame ui; do
-            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
-            test -n "$SRC"
+            SRC="$RUNNER_TEMP/qvms/vm/$NAME.qvm"
             test -s "$SRC"
             cp "$SRC" "$BASEQ3/vm/$NAME.qvm"
           done
@@ -105,6 +129,7 @@ jobs:
           file "$APP/$EXE"
           lipo -archs "$APP/$EXE" | grep -qw arm64
           test -s "$APP/baseq3/default.cfg"
+          test -s "$APP/baseq3/hijacked.cfg"
           test -s "$APP/baseq3/vm/qagame.qvm"
           test -s "$APP/baseq3/vm/cgame.qvm"
           test -s "$APP/baseq3/vm/ui.qvm"
