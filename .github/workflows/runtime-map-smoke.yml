@@ -59,6 +59,7 @@ jobs:
           cat > "$GAME/default.cfg" <<'EOF'
           seta sv_pure "0"
           seta vm_game "1"
+          seta bot_enable "0"
           EOF
           test -s "$GAME/maps/hijacked.bsp"
           test -s "$GAME/vm/qagame.qvm"
@@ -73,6 +74,7 @@ jobs:
             +set fs_homepath "$ROOT" \
             +set sv_pure 0 \
             +set vm_game 1 \
+            +set bot_enable 0 \
             +set dedicated 2 \
             +map hijacked \
             +quit > "$RUNNER_TEMP/map-smoke.log" 2>&1
@@ -82,8 +84,10 @@ jobs:
           if [ "$STATUS" -ne 0 ] && [ "$STATUS" -ne 124 ]; then
             exit "$STATUS"
           fi
-          grep -F -- '----- Server Initialization -----' "$RUNNER_TEMP/map-smoke.log"
-          grep -F -- 'hijacked' "$RUNNER_TEMP/map-smoke.log"
+          grep -F -- '------ Server Initialization ------' "$RUNNER_TEMP/map-smoke.log"
+          grep -F -- 'Server: hijacked' "$RUNNER_TEMP/map-smoke.log"
+          grep -F -- 'qagame loaded' "$RUNNER_TEMP/map-smoke.log"
+          grep -F -- 'InitGame:' "$RUNNER_TEMP/map-smoke.log"
           if grep -Eiq '(^|[^a-z])(fatal|error):|couldn.t load|could not load|failed to load' "$RUNNER_TEMP/map-smoke.log"; then
             echo 'Fatal map-load signature detected'
             exit 1
