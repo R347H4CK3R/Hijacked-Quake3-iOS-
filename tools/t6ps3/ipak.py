@@ -21,6 +21,14 @@ class IpakHeader:
     sections: tuple[IpakSection, ...]
 
 
+@dataclass(frozen=True)
+class IpakIndexEntry:
+    data_hash: int
+    name_hash: int
+    offset: int
+    size: int
+
+
 def parse_ipak_header(data: bytes, *, actual_size: int | None = None) -> IpakHeader:
     if len(data) < 16:
         raise ParseError(
@@ -66,3 +74,30 @@ def parse_ipak_header(data: bytes, *, actual_size: int | None = None) -> IpakHea
         sections.append(IpakSection(section_type, offset, size, item_count))
 
     return IpakHeader(version, declared, tuple(sections))
+
+
+def parse_ipak_index(
+    data: bytes, *, item_count: int, data_section_size: int
+) -> tuple[IpakIndexEntry, ...]:
+    needed = item_count * 16
+    if len(data) < needed:
+        raise ParseError(
+            f"IPAK index truncated: need 0x{needed:X} bytes for {item_count} entries, "
+            f"have 0x{len(data):X}"
+        )
+
+    entries: list[IpakIndexEntry] = []
+    for index in range(item_count):
+        p = index * 16
+        data_hash = int.from_bytes(data[p : p + 4], "big")
+        name_hash = int.from_bytes(data[p + 4 : p + 8], "big")
+        offset = int.from_bytes(data[p + 8 : p + 12], "big")
+        size = int.from_bytes(data[p + 12 : p + 16], "big")
+        if offset > data_section_size or size > data_section_size - offset:
+            raise ParseError(
+                f"IPAK index entry {index} out of bounds: offset=0x{offset:X} "
+                f"size=0x{size:X} data_section=0x{data_section_size:X}"
+            )
+        entries.append(IpakIndexEntry(data_hash, name_hash, offset, size))
+
+    return tuple(entries)
