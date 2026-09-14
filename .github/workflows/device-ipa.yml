@@ -20,6 +20,17 @@ jobs:
           cd "$RUNNER_TEMP/ioq3"
           git checkout 588393618dbc82e7207c21c6ddecca229944a03a
           test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('code/cgame/cg_players.c')
+          s = p.read_text()
+          old = 'CG_Error( "DEFAULT_MODEL (%s) failed to register", DEFAULT_MODEL );'
+          new = 'CG_Printf( "WARNING: DEFAULT_MODEL (%s) unavailable; continuing without player media\\n", DEFAULT_MODEL );'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one DEFAULT_MODEL fatal path, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          grep -F 'continuing without player media' code/cgame/cg_players.c
 
       - name: Build GPL baseq3 QVMs
         run: |
