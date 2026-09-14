@@ -1,0 +1,77 @@
+name: Validate Quake 3 Toolchain
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip pytest
+      - run: PYTHONPATH=. pytest -q
+
+  q3map2-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NetRadiant build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git pkg-config \
+            libx11-dev libgtk2.0-dev libgtkglext1-dev libxml2-dev \
+            libjpeg-dev libwebp-dev libminizip-dev zlib1g-dev
+      - name: Build q3map2 only
+        run: |
+          git clone --depth 1 https://gitlab.com/xonotic/netradiant.git "$RUNNER_TEMP/netradiant"
+          cmake -S "$RUNNER_TEMP/netradiant" -B "$RUNNER_TEMP/netradiant/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_RADIANT=OFF \
+            -DBUILD_TOOLS=ON \
+            -DDOWNLOAD_GAMEPACKS=OFF
+          cmake --build "$RUNNER_TEMP/netradiant/build" --target q3map2 -- -j2
+          find "$RUNNER_TEMP/netradiant/build" -type f -name q3map2 -perm -111 -print
+      - name: Create open-source smoke map
+        run: |
+          ROOT="$RUNNER_TEMP/q3smoke"
+          mkdir -p "$ROOT/baseq3/maps" "$ROOT/baseq3/scripts"
+          cat > "$ROOT/baseq3/scripts/shaderlist.txt" <<'EOF'
+          common
+          EOF
+          cat > "$ROOT/baseq3/scripts/common.shader" <<'EOF'
+          textures/common/caulk
+          {
+            surfaceparm nodraw
+            surfaceparm nomarks
+          }
+          EOF
+          cat > "$ROOT/baseq3/maps/smoke.map" <<'EOF'
+          {
+          "classname" "worldspawn"
+          {
+          ( -128 -128 -64 ) ( -128 128 -64 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
+          ( 128 128 64 ) ( -128 128 64 ) ( -128 -128 64 ) textures/common/caulk 0 0 0 1 1
+          ( -128 -128 -64 ) ( 128 -128 -64 ) ( 128 -128 64 ) textures/common/caulk 0 0 0 1 1
+          ( -128 128 64 ) ( 128 128 64 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
+          ( -128 -128 -64 ) ( -128 -128 64 ) ( -128 128 64 ) textures/common/caulk 0 0 0 1 1
+          ( 128 128 64 ) ( 128 -128 64 ) ( 128 -128 -64 ) textures/common/caulk 0 0 0 1 1
+          }
+          }
+          {
+          "classname" "info_player_deathmatch"
+          "origin" "0 0 0"
+          }
+          EOF
+      - name: Compile synthetic BSP
+        run: |
+          Q3MAP2="$(find "$RUNNER_TEMP/netradiant/build" -type f -name q3map2 -perm -111 | head -1)"
+          test -n "$Q3MAP2"
+          "$Q3MAP2" -game quake3 -fs_basepath "$RUNNER_TEMP/q3smoke" -fs_game baseq3 -bsp "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.map"
+          test -s "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.bsp"
+          ls -lh "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.bsp"
