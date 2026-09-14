@@ -1,0 +1,61 @@
+name: Build Open Quake 3 Gamecode
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/build-open-q3-gamecode.yml'
+      - 'runtime/open-baseq3/**'
+  workflow_dispatch:
+
+jobs:
+  build-qvms:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned GPL Quake 3 source
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Install QVM build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential bison flex zip
+
+      - name: Build GPL baseq3 QVM modules only
+        run: |
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          make -j2 \
+            BUILD_CLIENT=0 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=0 \
+            BUILD_GAME_QVM=1 \
+            BUILD_BASEGAME=1 \
+            BUILD_MISSIONPACK=0
+          find build -type f \( -name 'qagame.qvm' -o -name 'cgame.qvm' -o -name 'ui.qvm' \) -print
+
+      - name: Stage open baseq3 runtime
+        run: |
+          OUT="$RUNNER_TEMP/open-baseq3"
+          mkdir -p "$OUT/vm"
+          SRC="$(find "$RUNNER_TEMP/Quake3-iOS/build" -type f -path '*/baseq3/vm/qagame.qvm' -print -quit | xargs dirname)"
+          test -n "$SRC"
+          cp "$SRC/qagame.qvm" "$OUT/vm/"
+          cp "$SRC/cgame.qvm" "$OUT/vm/"
+          cp "$SRC/ui.qvm" "$OUT/vm/"
+          cp runtime/open-baseq3/default.cfg "$OUT/default.cfg"
+          test -s "$OUT/vm/qagame.qvm"
+          test -s "$OUT/vm/cgame.qvm"
+          test -s "$OUT/vm/ui.qvm"
+          (cd "$OUT" && zip -9 -q -r "$RUNNER_TEMP/open-baseq3.pk3" vm default.cfg)
+          unzip -l "$RUNNER_TEMP/open-baseq3.pk3"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-baseq3-gamecode
+          path: ${{ runner.temp }}/open-baseq3.pk3
+          if-no-files-found: error
