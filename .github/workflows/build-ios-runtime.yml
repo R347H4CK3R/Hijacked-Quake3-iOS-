@@ -30,7 +30,7 @@ jobs:
           DERIVED="$RUNNER_TEMP/DerivedData"
           xcodebuild \
             -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
-            -target Quake3-iOS \
+            -scheme Quake3-iOS \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath "$DERIVED" \
@@ -46,12 +46,15 @@ jobs:
           mkdir -p "$APP/baseq3"
           cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
           printf '%s\n' "$APP" > "$RUNNER_TEMP/app-path.txt"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist"
-          file "$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          test -n "$EXE"
+          file "$APP/$EXE"
+          lipo -archs "$APP/$EXE"
 
       - name: Package unsigned IPA
         run: |
           APP="$(cat "$RUNNER_TEMP/app-path.txt")"
+          rm -rf "$RUNNER_TEMP/Payload"
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$APP" "$RUNNER_TEMP/Payload/"
           cd "$RUNNER_TEMP"
