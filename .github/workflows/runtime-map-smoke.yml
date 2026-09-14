@@ -43,9 +43,10 @@ jobs:
       - name: Stage verified Hijacked map
         run: |
           ROOT="$RUNNER_TEMP/runtime"
-          mkdir -p "$ROOT/baseq3/maps" "$ROOT/baseq3/vm"
-          cp "$(cat "$RUNNER_TEMP/qagame-path.txt")" "$ROOT/baseq3/vm/qagame.qvm"
-          export BSP_OUT="$ROOT/baseq3/maps/hijacked.bsp"
+          GAME="$ROOT/foobar"
+          mkdir -p "$GAME/maps" "$GAME/vm"
+          cp "$(cat "$RUNNER_TEMP/qagame-path.txt")" "$GAME/vm/qagame.qvm"
+          export BSP_OUT="$GAME/maps/hijacked.bsp"
           python3 - <<'PY'
           import base64, os, struct, zlib
           from pathlib import Path
@@ -55,12 +56,12 @@ jobs:
           assert struct.unpack_from('<i', data, 4)[0] == 46
           Path(os.environ['BSP_OUT']).write_bytes(data)
           PY
-          cat > "$ROOT/baseq3/default.cfg" <<'EOF'
+          cat > "$GAME/default.cfg" <<'EOF'
           seta sv_pure "0"
           seta vm_game "1"
           EOF
-          test -s "$ROOT/baseq3/maps/hijacked.bsp"
-          test -s "$ROOT/baseq3/vm/qagame.qvm"
+          test -s "$GAME/maps/hijacked.bsp"
+          test -s "$GAME/vm/qagame.qvm"
 
       - name: Load Hijacked in ioquake3 dedicated server
         run: |
@@ -70,7 +71,6 @@ jobs:
           timeout 20s "$SERVER" \
             +set fs_basepath "$ROOT" \
             +set fs_homepath "$ROOT" \
-            +set fs_game "" \
             +set sv_pure 0 \
             +set vm_game 1 \
             +set dedicated 2 \
