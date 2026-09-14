@@ -38,8 +38,12 @@ jobs:
           cmake --build "$RUNNER_TEMP/netradiant/build" --target q3map2 -- -j2
           Q3MAP2="$(find "$RUNNER_TEMP/netradiant/build" -type f -name q3map2 -perm -111 | head -1)"
           test -n "$Q3MAP2"
-          mkdir -p "$RUNNER_TEMP/q3map2-artifact"
+          mkdir -p "$RUNNER_TEMP/q3map2-artifact/lib"
           cp "$Q3MAP2" "$RUNNER_TEMP/q3map2-artifact/q3map2"
+          JPEG_LIB="$(ldd "$Q3MAP2" | awk '/libjpeg\.so\.8/ {print $3; exit}')"
+          test -n "$JPEG_LIB"
+          cp -L "$JPEG_LIB" "$RUNNER_TEMP/q3map2-artifact/lib/libjpeg.so.8"
+          ldd "$Q3MAP2"
       - name: Create open-source smoke map and OBJ clip model
         run: |
           ROOT="$RUNNER_TEMP/q3smoke"
@@ -116,6 +120,6 @@ jobs:
           ls -lh "$RUNNER_TEMP/q3smoke/baseq3/maps/smoke.bsp"
       - uses: actions/upload-artifact@v4
         with:
-          name: q3map2-linux-x64
-          path: ${{ runner.temp }}/q3map2-artifact/q3map2
+          name: q3map2-linux-x64-portable
+          path: ${{ runner.temp }}/q3map2-artifact
           if-no-files-found: error
