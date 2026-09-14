@@ -62,7 +62,6 @@ jobs:
           git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
           cd "$RUNNER_TEMP/Quake3-iOS"
           git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
-          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7207c21c6ddecca229944a03a" || true
           test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
 
       - name: Patch deterministic Hijacked startup
@@ -110,7 +109,7 @@ jobs:
           file "$APP/Quake3-iOS"
           xcrun lipo -info "$APP/Quake3-iOS" || true
 
-      - name: Inject standalone gamecode and Hijacked smoke map
+      - name: Inject standalone gamecode and Hijacked map
         run: |
           APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
           mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
@@ -130,8 +129,9 @@ jobs:
           seta r_fullscreen "1"
           EOF
           cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
-          base64 --decode tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp" || \
-            base64 -D tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp"
+          /usr/bin/base64 -D \
+            -i tests/fixtures/hijacked-smoke.bsp.base64 \
+            -o "$APP/baseq3/maps/hijacked.bsp"
           test -s "$APP/baseq3/maps/hijacked.bsp"
           test -s "$APP/baseq3/vm/qagame.qvm"
           test -s "$APP/baseq3/vm/cgame.qvm"
