@@ -1,8 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 import struct
 import zipfile
 
-from tools.build_hijacked_q3 import write_stage
+from tools.build_hijacked_q3 import build_from_fastfile_bytes, write_stage
 from tools.t6ps3.clipmesh import CollisionMeshView
 from tools.t6ps3.mapents import MapEntsView
 
@@ -41,3 +43,31 @@ def test_write_stage_can_package_source_pk3(tmp_path: Path):
     assert "maps/hijacked.map" in names
     assert "models/hijacked/hijacked_collision.obj" in names
     assert "scripts/hijacked.shader" in names
+
+
+def test_build_from_fastfile_bytes_runs_entire_pipeline(tmp_path: Path):
+    data, mesh, mapents = _fixture()
+    decoded = b"\0" * 40 + data
+    decode_report = SimpleNamespace(
+        zone_name="mp_hijacked",
+        version=146,
+        decoded_bytes=len(decoded),
+        decoded_sha256="abc123",
+        chunk_count=1603,
+    )
+
+    with (
+        patch("tools.build_hijacked_q3.decode_fastfile_bytes", return_value=(decoded, decode_report)) as decode,
+        patch("tools.build_hijacked_q3.locate_collision_mesh", return_value=mesh) as locate_mesh,
+        patch("tools.build_hijacked_q3.locate_mapents", return_value=mapents) as locate_entities,
+    ):
+        report = build_from_fastfile_bytes(b"signed-fastfile", tmp_path)
+
+    decode.assert_called_once_with(b"signed-fastfile")
+    locate_mesh.assert_called_once_with(data)
+    locate_entities.assert_called_once_with(data)
+    assert report["zone_name"] == "mp_hijacked"
+    assert report["fastfile_version"] == 146
+    assert report["collision_triangles"] == 1
+    assert report["map_entity_count"] == 1
+    assert (tmp_path / "maps/hijacked.map").is_file()
