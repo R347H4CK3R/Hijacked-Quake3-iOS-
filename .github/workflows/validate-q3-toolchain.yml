@@ -37,12 +37,13 @@ jobs:
             -DDOWNLOAD_GAMEPACKS=OFF
           cmake --build "$RUNNER_TEMP/netradiant/build" --target q3map2 -- -j2
           find "$RUNNER_TEMP/netradiant/build" -type f -name q3map2 -perm -111 -print
-      - name: Create open-source smoke map
+      - name: Create open-source smoke map and OBJ clip model
         run: |
           ROOT="$RUNNER_TEMP/q3smoke"
-          mkdir -p "$ROOT/baseq3/maps" "$ROOT/baseq3/scripts"
+          mkdir -p "$ROOT/baseq3/maps" "$ROOT/baseq3/scripts" "$ROOT/baseq3/models/hijacked"
           cat > "$ROOT/baseq3/scripts/shaderlist.txt" <<'EOF'
           common
+          hijacked
           EOF
           cat > "$ROOT/baseq3/scripts/common.shader" <<'EOF'
           textures/common/caulk
@@ -51,24 +52,60 @@ jobs:
             surfaceparm nomarks
           }
           EOF
+          cat > "$ROOT/baseq3/scripts/hijacked.shader" <<'EOF'
+          textures/hijacked/collision
+          {
+            q3map_clipModel
+            surfaceparm solid
+            surfaceparm nolightmap
+            {
+              map $whiteimage
+              rgbGen const ( 0.55 0.62 0.68 )
+            }
+          }
+          EOF
+          cat > "$ROOT/baseq3/models/hijacked/hijacked_collision.mtl" <<'EOF'
+          newmtl textures/hijacked/collision
+          Kd 0.55 0.62 0.68
+          EOF
+          cat > "$ROOT/baseq3/models/hijacked/hijacked_collision.obj" <<'EOF'
+          mtllib hijacked_collision.mtl
+          usemtl textures/hijacked/collision
+          v -32 -32 0
+          v 32 -32 0
+          v 32 32 0
+          v -32 32 0
+          v 0 0 64
+          f 1 2 5
+          f 2 3 5
+          f 3 4 5
+          f 4 1 5
+          f 4 3 2
+          f 4 2 1
+          EOF
           cat > "$ROOT/baseq3/maps/smoke.map" <<'EOF'
           {
           "classname" "worldspawn"
           {
           ( -128 -128 -64 ) ( -128 128 -64 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
-          ( 128 128 64 ) ( -128 128 64 ) ( -128 -128 64 ) textures/common/caulk 0 0 0 1 1
-          ( -128 -128 -64 ) ( 128 -128 -64 ) ( 128 -128 64 ) textures/common/caulk 0 0 0 1 1
-          ( -128 128 64 ) ( 128 128 64 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
-          ( -128 -128 -64 ) ( -128 -128 64 ) ( -128 128 64 ) textures/common/caulk 0 0 0 1 1
-          ( 128 128 64 ) ( 128 -128 64 ) ( 128 -128 -64 ) textures/common/caulk 0 0 0 1 1
+          ( 128 128 128 ) ( -128 128 128 ) ( -128 -128 128 ) textures/common/caulk 0 0 0 1 1
+          ( -128 -128 -64 ) ( 128 -128 -64 ) ( 128 -128 128 ) textures/common/caulk 0 0 0 1 1
+          ( -128 128 128 ) ( 128 128 128 ) ( 128 128 -64 ) textures/common/caulk 0 0 0 1 1
+          ( -128 -128 -64 ) ( -128 -128 128 ) ( -128 128 128 ) textures/common/caulk 0 0 0 1 1
+          ( 128 128 128 ) ( 128 -128 128 ) ( 128 -128 -64 ) textures/common/caulk 0 0 0 1 1
           }
           }
           {
+          "classname" "misc_model"
+          "model" "models/hijacked/hijacked_collision.obj"
+          "spawnflags" "2"
+          }
+          {
           "classname" "info_player_deathmatch"
-          "origin" "0 0 0"
+          "origin" "0 0 32"
           }
           EOF
-      - name: Compile synthetic BSP
+      - name: Compile synthetic OBJ-backed BSP
         run: |
           Q3MAP2="$(find "$RUNNER_TEMP/netradiant/build" -type f -name q3map2 -perm -111 | head -1)"
           test -n "$Q3MAP2"
