@@ -1,0 +1,162 @@
+name: Unsigned iPhone IPA
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/device-ipa.yml'
+      - 'tools/patch_quake3_ios.py'
+      - 'tests/fixtures/hijacked-smoke.bsp.base64'
+      - 'runtime/HijackedConfig.cfg'
+  workflow_dispatch:
+
+jobs:
+  qvms:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch pinned ioquake3 source
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
+
+      - name: Build GPL baseq3 QVMs
+        run: |
+          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+          mkdir -p "$RUNNER_TEMP/qvms/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -s "$SRC"
+            cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: device-qvms
+          path: ${{ runner.temp }}/qvms
+          if-no-files-found: error
+
+  device-ipa:
+    needs: qvms
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: device-qvms
+          path: ${{ runner.temp }}/qvms
+
+      - name: Fetch pinned Quake3-iOS runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7207c21c6ddecca229944a03a" || true
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Patch deterministic Hijacked startup
+        run: |
+          PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
+
+      - name: Stage expected baseq3 bundle resource
+        run: |
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          mkdir -p "$BASEQ3"
+          printf '// CI staging placeholder; Hijacked data is injected after build.\n' > "$BASEQ3/ci-placeholder.cfg"
+          test -d "$BASEQ3"
+
+      - name: Build unsigned arm64 iPhone app
+        run: |
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          set +e
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -scheme Quake3-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build > "$RUNNER_TEMP/device-xcodebuild.log" 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            echo '=== Xcode compiler/linker diagnostics ==='
+            grep -nE 'error:|fatal error:|Undefined symbols|ld: |BUILD FAILED|Command .* failed' "$RUNNER_TEMP/device-xcodebuild.log" | tail -200 || true
+            echo '=== End diagnostics ==='
+            exit "$STATUS"
+          fi
+          APP="$(find "$DERIVED/Build/Products" -type d -path '*Release-iphoneos/Quake3-iOS.app' -print -quit)"
+          test -n "$APP"
+          test -x "$APP/Quake3-iOS"
+          printf '%s\n' "$APP" > "$RUNNER_TEMP/device-app-path.txt"
+          file "$APP/Quake3-iOS"
+          xcrun lipo -info "$APP/Quake3-iOS" || true
+
+      - name: Inject standalone gamecode and Hijacked smoke map
+        run: |
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
+          rm -f "$APP/baseq3/ci-placeholder.cfg"
+          for NAME in qagame cgame ui; do
+            SRC="$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+            test -s "$SRC"
+            cp "$SRC" "$APP/baseq3/vm/$NAME.qvm"
+          done
+          cat > "$APP/baseq3/default.cfg" <<'EOF'
+          seta com_introplayed "1"
+          seta sv_pure "0"
+          seta vm_game "0"
+          seta vm_cgame "0"
+          seta vm_ui "0"
+          seta com_maxfps "60"
+          seta r_fullscreen "1"
+          EOF
+          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          base64 --decode tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp" || \
+            base64 -D tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/vm/qagame.qvm"
+          test -s "$APP/baseq3/vm/cgame.qvm"
+          test -s "$APP/baseq3/vm/ui.qvm"
+
+      - name: Package unsigned IPA
+        run: |
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa" Payload
+          test -s "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa"
+          unzip -l "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa" | grep -F 'Payload/Quake3-iOS.app/Quake3-iOS'
+          file "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hijacked-Quake3-iOS-unsigned-IPA
+          path: Hijacked-Quake3-iOS-unsigned.ipa
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: device-build-logs
+          path: ${{ runner.temp }}/device-xcodebuild.log
+          if-no-files-found: ignore
