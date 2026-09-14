@@ -5,8 +5,9 @@ import argparse
 import json
 
 from tools.q3.export import build_map_text, build_mtl_text, build_pk3, build_shader_text, write_obj
-from tools.t6ps3.clipmesh import CollisionMeshView
-from tools.t6ps3.mapents import MapEntsView
+from tools.t6ps3.clipmesh import CollisionMeshView, locate_collision_mesh
+from tools.t6ps3.fastfile_decode import decode_fastfile_bytes
+from tools.t6ps3.mapents import MapEntsView, locate_mapents
 
 
 def write_stage(
@@ -54,28 +55,80 @@ def write_stage(
     return report
 
 
+def build_from_fastfile_bytes(
+    source: bytes,
+    out_dir: Path,
+    *,
+    source_pk3: Path | None = None,
+) -> dict[str, object]:
+    """Decode a signed PS3 T6 fastfile and produce the Quake 3 staging tree."""
+    decoded, decode_report = decode_fastfile_bytes(source)
+    if len(decoded) < 40:
+        raise ValueError("decoded fastfile is missing the 40-byte XFile header")
+
+    data = decoded[40:]
+    mesh = locate_collision_mesh(data)
+    mapents = locate_mapents(data)
+    report = write_stage(data, mesh, mapents, out_dir, source_pk3=source_pk3)
+    report.update(
+        {
+            "zone_name": decode_report.zone_name,
+            "fastfile_version": decode_report.version,
+            "decoded_bytes": decode_report.decoded_bytes,
+            "decoded_sha256": decode_report.decoded_sha256,
+            "xchunk_count": decode_report.chunk_count,
+            "map_entity_count": len(mapents.entities),
+        }
+    )
+    (out_dir / "hijacked-stage-report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return report
+
+
+def build_from_fastfile(
+    fastfile: Path,
+    out_dir: Path,
+    *,
+    source_pk3: Path | None = None,
+) -> dict[str, object]:
+    return build_from_fastfile_bytes(fastfile.read_bytes(), out_dir, source_pk3=source_pk3)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Write Quake 3 staging files from a decoded Hijacked payload.")
-    parser.add_argument("--decoded", type=Path, required=True, help="Decoded T6 zone including 40-byte XFile header")
+    parser = argparse.ArgumentParser(description="Write Quake 3 staging files from PS3 BO2 Hijacked data.")
+    parser.add_argument("--fastfile", type=Path, help="Signed PS3 mp_hijacked.ff; preferred direct input")
+    parser.add_argument("--decoded", type=Path, help="Decoded T6 zone including 40-byte XFile header")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--mesh-json", type=Path, required=True, help="CollisionMeshView fields as JSON")
-    parser.add_argument("--mapents-json", type=Path, required=True, help="MapEntsView fields and entities as JSON")
+    parser.add_argument("--mesh-json", type=Path, help="Legacy CollisionMeshView fields as JSON")
+    parser.add_argument("--mapents-json", type=Path, help="Legacy MapEntsView fields and entities as JSON")
     parser.add_argument("--source-pk3", type=Path)
     args = parser.parse_args(argv)
 
-    decoded = args.decoded.read_bytes()
-    data = decoded[40:]
-    mesh_data = json.loads(args.mesh_json.read_text(encoding="utf-8"))
-    mapents_data = json.loads(args.mapents_json.read_text(encoding="utf-8"))
-    mesh = CollisionMeshView(**mesh_data)
-    mapents = MapEntsView(
-        mapents_data.get("offset", 0),
-        mapents_data.get("name_pointer", 0),
-        mapents_data.get("num_entity_chars", 0),
-        mapents_data.get("entity_string", ""),
-        tuple(mapents_data["entities"]),
-    )
-    report = write_stage(data, mesh, mapents, args.out, source_pk3=args.source_pk3)
+    if args.fastfile is not None:
+        if args.decoded is not None or args.mesh_json is not None or args.mapents_json is not None:
+            parser.error("--fastfile cannot be combined with --decoded/--mesh-json/--mapents-json")
+        report = build_from_fastfile(args.fastfile, args.out, source_pk3=args.source_pk3)
+    else:
+        if args.decoded is None or args.mesh_json is None or args.mapents_json is None:
+            parser.error("use --fastfile, or provide --decoded, --mesh-json, and --mapents-json together")
+        decoded = args.decoded.read_bytes()
+        if len(decoded) < 40:
+            parser.error("decoded zone is missing the 40-byte XFile header")
+        data = decoded[40:]
+        mesh_data = json.loads(args.mesh_json.read_text(encoding="utf-8"))
+        mapents_data = json.loads(args.mapents_json.read_text(encoding="utf-8"))
+        mesh = CollisionMeshView(**mesh_data)
+        mapents = MapEntsView(
+            mapents_data.get("offset", 0),
+            mapents_data.get("name_pointer", 0),
+            mapents_data.get("num_entity_chars", 0),
+            mapents_data.get("entity_string", ""),
+            tuple(mapents_data["entities"]),
+        )
+        report = write_stage(data, mesh, mapents, args.out, source_pk3=args.source_pk3)
+
     print(json.dumps(report, sort_keys=True))
     return 0
 
