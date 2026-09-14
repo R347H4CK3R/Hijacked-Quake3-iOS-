@@ -97,6 +97,7 @@ jobs:
         run: |
           git clone --depth 1 --branch release-2.0.14 https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL-2.0.14"
           cmake -S "$RUNNER_TEMP/SDL-2.0.14" -B "$RUNNER_TEMP/sdl-build" -G Xcode \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=iphonesimulator \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
