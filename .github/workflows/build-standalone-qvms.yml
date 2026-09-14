@@ -21,23 +21,28 @@ jobs:
           git checkout 588393618dbc82e7207c21c6ddecca229944a03a
           test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
 
+      - name: Configure baseq3 QVM-only build
+        run: |
+          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+
       - name: Build baseq3 QVMs only
         run: |
-          cd "$RUNNER_TEMP/ioq3"
-          make -j2 \
-            BUILD_CLIENT=0 \
-            BUILD_SERVER=0 \
-            BUILD_BASEGAME=1 \
-            BUILD_MISSIONPACK=0 \
-            BUILD_GAME_SO=0 \
-            BUILD_GAME_QVM=1
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
 
       - name: Collect and verify QVMs
         run: |
           OUT="$RUNNER_TEMP/standalone-baseq3/vm"
           mkdir -p "$OUT"
           for NAME in qagame cgame ui; do
-            SRC="$(find "$RUNNER_TEMP/ioq3/build" -type f -name "$NAME.qvm" | head -1)"
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
             test -n "$SRC"
             test -s "$SRC"
             cp "$SRC" "$OUT/$NAME.qvm"
