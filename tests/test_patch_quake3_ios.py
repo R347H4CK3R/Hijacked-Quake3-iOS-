@@ -1,4 +1,9 @@
-from tools.patch_quake3_ios import patch_app_delegate, patch_game_view_controller, patch_storyboard
+from tools.patch_quake3_ios import (
+    patch_app_delegate,
+    patch_game_view_controller,
+    patch_storyboard,
+    patch_sys_main,
+)
 
 
 def test_game_view_controller_defaults_to_hijacked_and_safe_name():
@@ -41,3 +46,39 @@ def test_app_delegate_launches_hijacked_game_controller_directly():
     assert 'instantiateViewControllerWithIdentifier:@"HijackedGameVC"' in patched
     assert 'self.uiwindow.rootViewController = hijackedGameController;' in patched
     assert 'instantiateViewControllerWithIdentifier:@"RootNC"' not in patched
+
+
+def test_sys_main_traces_engine_startup_boundaries():
+    source = '''
+#ifdef IOS
+void Sys_Startup( int argc, char **argv )
+#else
+int main( int argc, char **argv )
+#endif // IOS
+{
+    int i;
+    char commandLine[ MAX_STRING_CHARS ] = { 0 };
+    SDL_version ver;
+    SDL_GetVersion( &ver );
+    Sys_PlatformInit( );
+    Sys_Milliseconds( );
+    Sys_ParseArgs( argc, argv );
+    Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );
+    Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );
+    CON_Init( );
+    Com_Init( commandLine );
+    NET_Init( );
+    while( 1 )
+    {
+        Com_Frame( );
+    }
+}
+'''
+    patched = patch_sys_main(source)
+    assert 'static void HijackedEngineTrace' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:entered")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:afterPlatformInit")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:beforeComInit")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:afterComInit")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:afterNetInit")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:firstFrame")' in patched
