@@ -1,0 +1,47 @@
+{
+  "zone_name": "mp_hijacked",
+  "platform": "PS3",
+  "t6_version": 146,
+  "decoded_sha256": "f93655577fac1916c542f351dc908886290b51a14cfaae39c58aa0fc10002ffa",
+  "decoded_bytes": 52391343,
+  "chunk_count": 1603,
+  "compressed_payload_bytes": 28636013,
+  "xfile": {
+    "size": 52391303,
+    "external_size": 0,
+    "block_sizes": [4780, 1730372, 9437184, 0, 6405248, 28412749, 17184936, 0]
+  },
+  "xasset_list": {
+    "script_string_count": 605,
+    "dependency_count": 0,
+    "asset_count": 883,
+    "asset_array_zone_content_offset_hex": "0x3774",
+    "asset_pointer_following_count": 879,
+    "asset_type_counts": {
+      "PHYSPRESET": 3,
+      "DESTRUCTIBLEDEF": 1,
+      "XANIMPARTS": 5,
+      "XMODEL": 463,
+      "MATERIAL": 2,
+      "SOUND": 204,
+      "SOUND_PATCH": 6,
+      "CLIPMAP": 2,
+      "GAMEWORLD_SP": 1,
+      "GAMEWORLD_MP": 1,
+      "GFXWORLD": 1,
+      "UI_MAP": 1,
+      "FONT": 1,
+      "AITYPE": 164,
+      "MPTYPE": 1,
+      "LEADERBOARD": 2,
+      "XGLOBALS": 1,
+      "SCRIPTPARSETREE": 1,
+      "KEYVALUEPAIRS": 1,
+      "MEMORYBLOCK": 13,
+      "ADDON_MAP_ENTS": 1,
+      "FOOTSTEP_TABLE": 1,
+      "UNKNOWN_60": 7
+    }
+  },
+  "copyrighted_payload_committed": false
+}
