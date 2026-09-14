@@ -21,6 +21,10 @@ jobs:
           git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
           test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
 
+      - name: Prepare upstream baseq3 build resource
+        run: |
+          mkdir -p "$HOME/Library/Application Support/quake3/baseq3"
+
       - name: Show Xcode targets
         run: |
           xcodebuild -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" -list
@@ -49,7 +53,7 @@ jobs:
           EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
           test -n "$EXE"
           file "$APP/$EXE"
-          lipo -archs "$APP/$EXE"
+          lipo -archs "$APP/$EXE" | grep -qw arm64
 
       - name: Package unsigned IPA
         run: |
