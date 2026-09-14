@@ -28,6 +28,25 @@ def patch_filesystem(path: Path) -> None:
         "unzip include",
     )
 
+    old_prefix = '''#ifdef IOS
+static void HijackedFsTrace(const char *message);
+#define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)
+#else
+#define HIJACKED_FS_TRACE(x) ((void)0)
+#endif
+'''
+    new_prefix = '''#ifdef IOS
+static void HijackedFsTrace(const char *message);
+static void HijackedFsTraceDetail(const char *stage, const char *detail);
+#define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)
+#define HIJACKED_FS_TRACE_DETAIL(stage, detail) HijackedFsTraceDetail((stage), (detail))
+#else
+#define HIJACKED_FS_TRACE(x) ((void)0)
+#define HIJACKED_FS_TRACE_DETAIL(stage, detail) ((void)0)
+#endif
+'''
+    source = replace_once(source, old_prefix, new_prefix, "early filesystem trace declarations")
+
     old_trace = '''static void HijackedFsTrace(const char *message)
 {
     const char *home = Sys_DefaultHomePath();
@@ -63,8 +82,8 @@ static void HijackedFsTraceDetail(const char *stage, const char *detail)
     if (!detail)
         detail = "";
 
-    /* Always emit before any path lookup or file open. If filesystem-backed
-       tracing itself is the blocker, the device console still identifies it. */
+    /* Emit before path lookup or file I/O. If the trace file itself blocks,
+       the device console still identifies the last operation entered. */
     fprintf(stderr, "HIJACKED_FS|%lu|%d|%s|%s|errno=%d\\n",
             sequence, milliseconds, stage, detail, savedErrno);
     fflush(stderr);
@@ -92,9 +111,7 @@ static void HijackedFsTraceDetail(const char *stage, const char *detail)
 static void HijackedFsTrace(const char *message)
 {
     HijackedFsTraceDetail(message, "");
-}
-#define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)
-#define HIJACKED_FS_TRACE_DETAIL(stage, detail) HijackedFsTraceDetail((stage), (detail))'''
+}'''
 
     source = replace_once(source, old_trace, new_trace, "filesystem trace implementation")
 
@@ -130,7 +147,6 @@ static void HijackedFsTrace(const char *message)
         "FS_ListFiles",
     )
 
-    # Turn the existing startup markers into useful value snapshots too.
     source = replace_once(
         source,
         '\tHIJACKED_FS_TRACE("FS_Startup:afterBasepathCvar");\n',
