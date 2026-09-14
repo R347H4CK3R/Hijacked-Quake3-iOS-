@@ -28,24 +28,35 @@ def patch_filesystem(path: Path) -> None:
         "unzip include",
     )
 
-    old_prefix = '''#ifdef IOS
+    # Keep this exact legacy block intact because device-ipa.yml uses its
+    # presence as the guard against inserting a duplicate declaration block.
+    legacy_prefix = '''#ifdef IOS
 static void HijackedFsTrace(const char *message);
 #define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)
 #else
 #define HIJACKED_FS_TRACE(x) ((void)0)
 #endif
+
 '''
-    new_prefix = '''#ifdef IOS
-static void HijackedFsTrace(const char *message);
+    detail_prefix = '''#ifdef IOS
 static void HijackedFsTraceDetail(const char *stage, const char *detail);
-#define HIJACKED_FS_TRACE(x) HijackedFsTrace(x)
 #define HIJACKED_FS_TRACE_DETAIL(stage, detail) HijackedFsTraceDetail((stage), (detail))
 #else
-#define HIJACKED_FS_TRACE(x) ((void)0)
 #define HIJACKED_FS_TRACE_DETAIL(stage, detail) ((void)0)
 #endif
+
 '''
-    source = replace_once(source, old_prefix, new_prefix, "early filesystem trace declarations")
+
+    if legacy_prefix in source:
+        source = source.replace(legacy_prefix, legacy_prefix + detail_prefix, 1)
+    else:
+        startup_marker = 'static void FS_Startup( const char *gameName )\n'
+        source = replace_once(
+            source,
+            startup_marker,
+            legacy_prefix + detail_prefix + startup_marker,
+            "FS_Startup trace declaration anchor",
+        )
 
     old_trace = '''static void HijackedFsTrace(const char *message)
 {
@@ -170,6 +181,8 @@ static void HijackedFsTrace(const char *message)
     )
 
     required = (
+        legacy_prefix.strip(),
+        'HIJACKED_FS_TRACE_DETAIL',
         'HIJACKED_FS|%lu|%d|%s|%s|errno=%d',
         'FS_AddGameDirectory:path',
         'FS_LoadZipFile:zipfile',
