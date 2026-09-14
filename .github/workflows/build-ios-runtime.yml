@@ -30,9 +30,47 @@ jobs:
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
           grep -F 'instantiateViewControllerWithIdentifier:@"HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/AppDelegate.m"
 
-      - name: Prepare upstream baseq3 build resource
+      - name: Build GPL baseq3 QVMs
         run: |
-          mkdir -p "$HOME/Library/Application Support/quake3/baseq3"
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          test "$(git rev-parse HEAD)" = "588393618dbc82e7207c21c6ddecca229944a03a"
+          cmake -S "$RUNNER_TEMP/ioq3" -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+
+      - name: Prepare standalone baseq3 build resource
+        run: |
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          mkdir -p "$BASEQ3/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -n "$SRC"
+            test -s "$SRC"
+            cp "$SRC" "$BASEQ3/vm/$NAME.qvm"
+          done
+          cat > "$BASEQ3/default.cfg" <<'EOF'
+          seta com_introplayed "1"
+          seta sv_pure "0"
+          seta vm_game "0"
+          seta vm_cgame "0"
+          seta vm_ui "0"
+          seta com_maxfps "60"
+          seta r_fullscreen "1"
+          EOF
+          cp runtime/HijackedConfig.cfg "$BASEQ3/hijacked.cfg"
+          test -s "$BASEQ3/vm/qagame.qvm"
+          test -s "$BASEQ3/vm/cgame.qvm"
+          test -s "$BASEQ3/vm/ui.qvm"
+          test -s "$BASEQ3/default.cfg"
 
       - name: Show Xcode targets
         run: |
@@ -52,19 +90,26 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Locate and prepare app
+      - name: Locate and verify standalone app
         run: |
           APP="$(find "$RUNNER_TEMP/DerivedData" -type d -name '*.app' | head -1)"
           test -n "$APP"
-          mkdir -p "$APP/baseq3"
-          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          mkdir -p "$APP/baseq3/vm"
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          cp "$BASEQ3/default.cfg" "$APP/baseq3/default.cfg"
+          cp "$BASEQ3/hijacked.cfg" "$APP/baseq3/hijacked.cfg"
+          cp "$BASEQ3/vm/"*.qvm "$APP/baseq3/vm/"
           printf '%s\n' "$APP" > "$RUNNER_TEMP/app-path.txt"
           EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
           test -n "$EXE"
           file "$APP/$EXE"
           lipo -archs "$APP/$EXE" | grep -qw arm64
+          test -s "$APP/baseq3/default.cfg"
+          test -s "$APP/baseq3/vm/qagame.qvm"
+          test -s "$APP/baseq3/vm/cgame.qvm"
+          test -s "$APP/baseq3/vm/ui.qvm"
 
-      - name: Package unsigned IPA
+      - name: Package unsigned standalone IPA
         run: |
           APP="$(cat "$RUNNER_TEMP/app-path.txt")"
           rm -rf "$RUNNER_TEMP/Payload"
@@ -74,6 +119,10 @@ jobs:
           /usr/bin/zip -qry Hijacked-Quake3-iOS-runtime.ipa Payload
           test -s Hijacked-Quake3-iOS-runtime.ipa
           unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/hijacked.cfg'
+          unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/default.cfg'
+          unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/vm/qagame.qvm'
+          unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/vm/cgame.qvm'
+          unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/vm/ui.qvm'
 
       - uses: actions/upload-artifact@v4
         with:
