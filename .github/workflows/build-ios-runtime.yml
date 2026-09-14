@@ -1,0 +1,66 @@
+name: Build Native iOS Runtime
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - 'runtime/**'
+      - '.github/workflows/build-ios-runtime.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned Quake3-iOS runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Show Xcode targets
+        run: |
+          xcodebuild -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" -list
+
+      - name: Build unsigned device app
+        run: |
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -target Quake3-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Locate and prepare app
+        run: |
+          APP="$(find "$RUNNER_TEMP/DerivedData" -type d -name '*.app' | head -1)"
+          test -n "$APP"
+          mkdir -p "$APP/baseq3"
+          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          printf '%s\n' "$APP" > "$RUNNER_TEMP/app-path.txt"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist"
+          file "$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+
+      - name: Package unsigned IPA
+        run: |
+          APP="$(cat "$RUNNER_TEMP/app-path.txt")"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          /usr/bin/zip -qry Hijacked-Quake3-iOS-runtime.ipa Payload
+          test -s Hijacked-Quake3-iOS-runtime.ipa
+          unzip -l Hijacked-Quake3-iOS-runtime.ipa | grep 'baseq3/hijacked.cfg'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hijacked-Quake3-iOS-runtime
+          path: ${{ runner.temp }}/Hijacked-Quake3-iOS-runtime.ipa
+          if-no-files-found: error
