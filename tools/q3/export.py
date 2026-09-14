@@ -8,8 +8,10 @@ import zipfile
 from tools.t6ps3.clipmesh import CollisionMeshView
 from tools.t6ps3.mapents import MapEntsView
 
-SHADER = "textures/hijacked/collision"
-MODEL_PATH = "models/hijacked/hijacked_collision.obj"
+COLLISION_SHADER = "textures/hijacked/collision"
+VISUAL_SHADER = "textures/hijacked/visual"
+COLLISION_MODEL_PATH = "models/hijacked/hijacked_collision.obj"
+VISUAL_MODEL_PATH = "models/hijacked/hijacked_visual.obj"
 
 
 def _num(value: float) -> str:
@@ -18,10 +20,17 @@ def _num(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
-def write_obj(data: bytes, mesh: CollisionMeshView, out: TextIO) -> None:
-    out.write("# Generated from user-supplied PS3 T6 collision data\n")
-    out.write("mtllib hijacked_collision.mtl\n")
-    out.write(f"usemtl {SHADER}\n")
+def write_obj(
+    data: bytes,
+    mesh: CollisionMeshView,
+    out: TextIO,
+    *,
+    shader: str = COLLISION_SHADER,
+    mtllib: str = "hijacked_collision.mtl",
+) -> None:
+    out.write("# Generated from user-supplied PS3 T6 geometry data\n")
+    out.write(f"mtllib {mtllib}\n")
+    out.write(f"usemtl {shader}\n")
     for index in range(mesh.vertex_count):
         x, y, z = struct.unpack_from(">3f", data, mesh.vertex_offset + index * 12)
         out.write(f"v {_num(x)} {_num(y)} {_num(z)}\n")
@@ -30,15 +39,19 @@ def write_obj(data: bytes, mesh: CollisionMeshView, out: TextIO) -> None:
         out.write(f"f {a + 1} {b + 1} {c + 1}\n")
 
 
-def build_mtl_text() -> str:
-    return f"newmtl {SHADER}\nKd 0.55 0.62 0.68\n"
+def build_mtl_text(shader: str = COLLISION_SHADER) -> str:
+    return f"newmtl {shader}\nKd 0.55 0.62 0.68\n"
 
 
 def build_shader_text() -> str:
-    return f"""{SHADER}
+    return f"""{COLLISION_SHADER}
 {{
     q3map_clipModel
-    surfaceparm solid
+    surfaceparm nolightmap
+}}
+
+{VISUAL_SHADER}
+{{
     surfaceparm nolightmap
     {{
         map $whiteimage
@@ -48,10 +61,26 @@ def build_shader_text() -> str:
 """
 
 
+def build_common_shader_text() -> str:
+    return """textures/common/caulk
+{
+    surfaceparm nodraw
+}
+"""
+
+
+def build_shaderlist_text() -> str:
+    return "common\nhijacked\n"
+
+
 def _plane(a, b, c, shader: str = "common/caulk") -> str:
     def point(v):
         return f"( {_num(v[0])} {_num(v[1])} {_num(v[2])} )"
-    return f"{point(a)} {point(b)} {point(c)} {shader} 0 0 0 1 1"
+
+    # Quake .map brushes keep the solid volume behind each plane. The
+    # PS3-derived bounds are described with outward-facing normals, so swap
+    # B/C here to emit the inward winding q3map2 expects for a valid brush.
+    return f"{point(a)} {point(c)} {point(b)} {shader} 0 0 0 1 1"
 
 
 def _box_brush(mins, maxs, shader: str = "common/caulk") -> str:
@@ -97,7 +126,12 @@ def build_map_text(mapents: MapEntsView, *, mins, maxs) -> str:
     parts.append("}\n")
     parts.append(
         "{\n\"classname\" \"misc_model\"\n"
-        f"\"model\" \"{MODEL_PATH}\"\n"
+        f"\"model\" \"{VISUAL_MODEL_PATH}\"\n"
+        "}\n"
+    )
+    parts.append(
+        "{\n\"classname\" \"misc_model\"\n"
+        f"\"model\" \"{COLLISION_MODEL_PATH}\"\n"
         "\"spawnflags\" \"2\"\n}\n"
     )
     for entity in _spawn_entities(mapents):
