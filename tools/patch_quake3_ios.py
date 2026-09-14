@@ -43,6 +43,12 @@ def patch_game_view_controller(source: str) -> str:
         'self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"',
         "playerName argv",
     )
+    source = _replace_once(
+        source,
+        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"]',
+        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_homepath", documentsDir]',
+        "bundled baseq3 filesystem argv",
+    )
     source = _replace_once_if_present(
         source,
         '        Sys_SetHomeDir(documentsDir)\n',
@@ -136,6 +142,8 @@ def patch_runtime(root: Path) -> None:
         'HijackedLaunchTrace.txt',
         'hijackedTrace("GameViewController.viewDidLoad")',
         'hijackedTrace("before Sys_Startup")',
+        '"+set", "fs_basepath", Bundle.main.resourcePath!',
+        '"+set", "fs_homepath", documentsDir',
     )
     required_delegate = (
         'static void HijackedTrace',
@@ -155,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("runtime_root", type=Path)
     args = parser.parse_args(argv)
     patch_runtime(args.runtime_root)
-    print("patched Quake3-iOS for deterministic Hijacked startup with breadcrumbs")
+    print("patched Quake3-iOS for deterministic Hijacked startup with bundled baseq3 paths and breadcrumbs")
     return 0
 
 
