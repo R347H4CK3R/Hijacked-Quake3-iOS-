@@ -126,6 +126,7 @@ jobs:
           seta vm_game "1"
           seta vm_cgame "1"
           seta vm_ui "1"
+          seta bot_enable "0"
           seta com_maxfps "60"
           seta r_fullscreen "1"
           EOF
@@ -169,6 +170,7 @@ jobs:
           grep -F 'seta vm_game "1"' "$APP/baseq3/default.cfg"
           grep -F 'seta vm_cgame "1"' "$APP/baseq3/default.cfg"
           grep -F 'seta vm_ui "1"' "$APP/baseq3/default.cfg"
+          grep -F 'seta bot_enable "0"' "$APP/baseq3/default.cfg"
           test -s "$APP/baseq3/vm/qagame.qvm"
           test -s "$APP/baseq3/vm/cgame.qvm"
           test -s "$APP/baseq3/vm/ui.qvm"
@@ -188,6 +190,7 @@ jobs:
           unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/cgame.qvm'
           unzip -l "$IPA" | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/ui.qvm'
           unzip -p "$IPA" 'Payload/Quake3-iOS.app/baseq3/default.cfg' | grep -F 'seta vm_game "1"'
+          unzip -p "$IPA" 'Payload/Quake3-iOS.app/baseq3/default.cfg' | grep -F 'seta bot_enable "0"'
           file "$IPA"
 
       - uses: actions/upload-artifact@v4
