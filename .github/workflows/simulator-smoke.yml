@@ -1,0 +1,133 @@
+name: iOS Simulator Runtime Smoke
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/simulator-smoke.yml'
+      - 'tools/patch_quake3_ios.py'
+      - 'tests/fixtures/hijacked-smoke.bsp.base64'
+      - 'runtime/HijackedConfig.cfg'
+  workflow_dispatch:
+
+jobs:
+  simulator-smoke:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned Quake3-iOS runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Patch deterministic Hijacked startup
+        run: |
+          PYTHONPATH=. python tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
+
+      - name: Build GPL QVMs
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+
+      - name: Build simulator app
+        run: |
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -scheme Quake3-iOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+          APP="$(find "$DERIVED/Build/Products" -type d -name 'Quake3-iOS.app' | head -1)"
+          test -n "$APP"
+          printf '%s\n' "$APP" > "$RUNNER_TEMP/app-path.txt"
+          file "$APP/Quake3-iOS"
+
+      - name: Inject standalone gamecode and smoke Hijacked BSP
+        run: |
+          APP="$(cat "$RUNNER_TEMP/app-path.txt")"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -s "$SRC"
+            cp "$SRC" "$APP/baseq3/vm/$NAME.qvm"
+          done
+          cat > "$APP/baseq3/default.cfg" <<'EOF'
+          seta com_introplayed "1"
+          seta sv_pure "0"
+          seta vm_game "0"
+          seta vm_cgame "0"
+          seta vm_ui "0"
+          seta com_maxfps "60"
+          seta r_fullscreen "1"
+          EOF
+          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          base64 --decode tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp" || \
+            base64 -D tests/fixtures/hijacked-smoke.bsp.base64 > "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/vm/qagame.qvm"
+
+      - name: Boot iPhone simulator and launch runtime
+        run: |
+          RUNTIME="$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); r=[x for x in d["runtimes"] if x.get("isAvailable") and x.get("name","").startswith("iOS")]; print(r[-1]["identifier"])')"
+          DEVICE_TYPE="$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; d=json.load(sys.stdin); ds=d["devicetypes"]; pick=next((x for x in ds if x["name"]=="iPhone 16 Plus"), next(x for x in ds if x["name"].startswith("iPhone"))); print(pick["identifier"])')"
+          UDID="$(xcrun simctl create HijackedSmoke "$DEVICE_TYPE" "$RUNTIME")"
+          echo "$UDID" > "$RUNNER_TEMP/sim-udid.txt"
+          xcrun simctl boot "$UDID"
+          open -a Simulator
+          xcrun simctl bootstatus "$UDID" -b
+          APP="$(cat "$RUNNER_TEMP/app-path.txt")"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
+          echo "$BUNDLE_ID" > "$RUNNER_TEMP/bundle-id.txt"
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" "$BUNDLE_ID" | tee "$RUNNER_TEMP/launch.txt"
+          sleep 12
+          xcrun simctl spawn "$UDID" ps -ax | tee "$RUNNER_TEMP/ps.txt"
+          grep -q 'Quake3-iOS' "$RUNNER_TEMP/ps.txt"
+
+      - name: Collect runtime log and reject crash
+        if: always()
+        run: |
+          UDID="$(cat "$RUNNER_TEMP/sim-udid.txt" 2>/dev/null || true)"
+          BUNDLE_ID="$(cat "$RUNNER_TEMP/bundle-id.txt" 2>/dev/null || true)"
+          if [ -n "$UDID" ]; then
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact \
+              --predicate 'process == "Quake3-iOS" OR eventMessage CONTAINS[c] "Quake3-iOS"' \
+              > "$RUNNER_TEMP/runtime.log" 2>&1 || true
+            cat "$RUNNER_TEMP/runtime.log" || true
+            if grep -Eiq 'Terminating app due to uncaught exception|EXC_BAD_ACCESS|SIGABRT|fatal error' "$RUNNER_TEMP/runtime.log"; then
+              echo 'runtime crash signature detected'
+              exit 1
+            fi
+            xcrun simctl shutdown "$UDID" || true
+            xcrun simctl delete "$UDID" || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-smoke-logs
+          path: |
+            ${{ runner.temp }}/launch.txt
+            ${{ runner.temp }}/runtime.log
+            ${{ runner.temp }}/ps.txt
+          if-no-files-found: ignore
