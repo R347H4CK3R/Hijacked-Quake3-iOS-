@@ -46,7 +46,7 @@ def patch_game_view_controller(source: str) -> str:
     source = _replace_once_if_present(
         source,
         '        Sys_SetHomeDir(documentsDir)\n',
-        '''        Sys_SetHomeDir(documentsDir)\n\n        let traceURL = URL(fileURLWithPath: documentsDir).appendingPathComponent("HijackedLaunchTrace.txt")\n        func hijackedTrace(_ message: String) {\n            let line = message + "\\n"\n            if !FileManager.default.fileExists(atPath: traceURL.path) {\n                try? line.write(to: traceURL, atomically: true, encoding: .utf8)\n            } else if let handle = try? FileHandle(forWritingTo: traceURL) {\n                handle.seekToEndOfFile()\n                handle.write(line.data(using: .utf8)!)\n                try? handle.close()\n            }\n        }\n        hijackedTrace("GameViewController.viewDidLoad")\n''',
+        '''        Sys_SetHomeDir(documentsDir)\n\n        let traceURL = URL(fileURLWithPath: documentsDir).appendingPathComponent("HijackedLaunchTrace.txt")\n        func hijackedTrace(_ message: String) {\n            let line = message + "\\n"\n            if !FileManager.default.fileExists(atPath: traceURL.path) {\n                try? line.write(to: traceURL, atomically: true, encoding: .utf8)\n            } else if let handle = try? FileHandle(forWritingTo: traceURL) {\n                handle.seekToEndOfFile()\n                handle.write(line.data(using: .utf8)!)\n                handle.closeFile()\n            }\n        }\n        hijackedTrace("GameViewController.viewDidLoad")\n''',
         "GameViewController trace setup",
     )
     source = _replace_once_if_present(
