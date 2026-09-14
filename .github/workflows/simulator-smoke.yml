@@ -67,6 +67,13 @@ jobs:
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
 
+      - name: Stage expected baseq3 bundle resource
+        run: |
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          mkdir -p "$BASEQ3"
+          printf '// CI staging placeholder; private Hijacked data is injected after build.\n' > "$BASEQ3/ci-placeholder.cfg"
+          test -d "$BASEQ3"
+
       - name: Build simulator app
         run: |
           DERIVED="$RUNNER_TEMP/DerivedData"
@@ -98,6 +105,7 @@ jobs:
         run: |
           APP="$(cat "$RUNNER_TEMP/app-path.txt")"
           mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
+          rm -f "$APP/baseq3/ci-placeholder.cfg"
           for NAME in qagame cgame ui; do
             SRC="$RUNNER_TEMP/qvms/vm/$NAME.qvm"
             test -s "$SRC"
