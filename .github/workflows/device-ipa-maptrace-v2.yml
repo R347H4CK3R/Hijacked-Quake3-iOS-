@@ -1,4 +1,4 @@
-name: Hijacked Device IPA Map Trace V2
+name: Hijacked Device IPA Full Diagnostics
 
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
       - name: Run patch regression tests
         run: |
           python3 -m pip install --disable-pip-version-check pytest
-          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py tests/test_full_diagnostics.py
 
       - name: Build open baseq3 QVMs
         run: |
@@ -53,7 +53,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: maptrace-v2-qvms
+          name: full-diagnostics-qvms
           path: ${{ runner.temp }}/qvms
           if-no-files-found: error
 
@@ -65,7 +65,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: maptrace-v2-qvms
+          name: full-diagnostics-qvms
           path: ${{ runner.temp }}/qvms
 
       - name: Fetch pinned Quake3-iOS runtime
@@ -75,13 +75,20 @@ jobs:
           git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
           test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
 
-      - name: Apply Hijacked startup and map-open instrumentation
+      - name: Apply full Hijacked diagnostics instrumentation
         run: |
           PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_full_diagnostics_ios.py "$RUNNER_TEMP/Quake3-iOS"
           FILES_C="$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c"
+          COMMON_C="$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
+          SERVER_C="$RUNNER_TEMP/Quake3-iOS/Quake3/server/sv_init.c"
+          WORLD_C="$RUNNER_TEMP/Quake3-iOS/Quake3/renderergl1/tr_bsp.c"
           SYS_MAIN="$RUNNER_TEMP/Quake3-iOS/Quake3/sys/sys_main.c"
-          grep -F 'FS_FOpenFileRead:filename' "$FILES_C"
+          grep -F 'HIJACKED_RESOLVE|result' "$FILES_C"
+          grep -F 'HIJACKED_DIAG|Com_Error' "$COMMON_C"
+          grep -F 'HIJACKED_SERVER|SpawnServer:begin' "$SERVER_C"
+          grep -F 'HIJACKED_WORLD|LoadWorld:begin' "$WORLD_C"
           grep -F 'HijackedMapLaunch:beforeQueue' "$SYS_MAIN"
           grep -F 'HijackedMapLaunch:afterExecute' "$SYS_MAIN"
 
@@ -211,15 +218,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
           cd "$RUNNER_TEMP/ipa"
-          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa" Payload
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa" Payload
           cd "$GITHUB_WORKSPACE"
-          test -s Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa
-          unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
-          unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
-          unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/textures/hijacked/visual.tga'
+          test -s Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa
+          unzip -t Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa >/dev/null
+          unzip -l Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
+          unzip -l Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/textures/hijacked/visual.tga'
+          shasum -a 256 Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Hijacked-Quake3-iOS-maptrace-v2-unsigned-IPA
-          path: Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa
+          name: Hijacked-Quake3-iOS-full-diagnostics-unsigned-IPA
+          path: Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa
           if-no-files-found: error
