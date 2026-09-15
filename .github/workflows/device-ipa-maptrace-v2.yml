@@ -113,10 +113,10 @@ jobs:
           test -x "$APP/Quake3-iOS"
           printf '%s\n' "$APP" > "$RUNNER_TEMP/device-app-path.txt"
 
-      - name: Inject QVMs and verified Hijacked BSP
+      - name: Inject QVMs, verified Hijacked BSP, and fallback visual texture
         run: |
           APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
-          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps" "$APP/baseq3/textures/hijacked"
           rm -f "$APP/baseq3/ci-placeholder.cfg"
           for NAME in qagame cgame ui; do
             cp "$RUNNER_TEMP/qvms/vm/$NAME.qvm" "$APP/baseq3/vm/$NAME.qvm"
@@ -134,9 +134,11 @@ jobs:
             > "$APP/baseq3/default.cfg"
           cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
           export BSP_OUT="$APP/baseq3/maps/hijacked.bsp"
+          export VISUAL_OUT="$APP/baseq3/textures/hijacked/visual.tga"
           python3 - <<'PY'
           import base64, hashlib, os, struct, zlib
           from pathlib import Path
+
           encoded = ''.join(Path('runtime/hijacked-device.bsp.zlib.b64').read_text().split())
           data = zlib.decompress(base64.b64decode(encoded))
           if data[:4] != b'IBSP':
@@ -151,8 +153,33 @@ jobs:
           output = Path(os.environ['BSP_OUT'])
           output.write_bytes(data)
           print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+
+          # The device trace shows the BSP asks specifically for
+          # textures/hijacked/visual.*. Bundle a deterministic uncompressed
+          # 24-bit TGA so the world cannot disappear solely because that
+          # material image is absent. This is intentionally high-contrast for
+          # the next device verification pass.
+          w = h = 256
+          header = bytearray(18)
+          header[2] = 2
+          header[12:14] = struct.pack('<H', w)
+          header[14:16] = struct.pack('<H', h)
+          header[16] = 24
+          pixels = bytearray()
+          for y in range(h):
+              for x in range(w):
+                  tile = ((x // 32) ^ (y // 32)) & 1
+                  if tile:
+                      b, g, r = 32, 180, 255
+                  else:
+                      b, g, r = 24, 24, 24
+                  pixels += bytes((b, g, r))
+          visual = Path(os.environ['VISUAL_OUT'])
+          visual.write_bytes(header + pixels)
+          print(f'VISUAL bytes={visual.stat().st_size} sha256={hashlib.sha256(visual.read_bytes()).hexdigest()}')
           PY
           test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/textures/hijacked/visual.tga"
 
       - name: Package IPA
         run: |
@@ -165,6 +192,7 @@ jobs:
           test -s Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa
           unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
           unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
+          unzip -l Hijacked-Quake3-iOS-maptrace-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/textures/hijacked/visual.tga'
 
       - uses: actions/upload-artifact@v4
         with:
