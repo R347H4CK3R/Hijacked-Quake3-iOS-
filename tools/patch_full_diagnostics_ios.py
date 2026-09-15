@@ -81,80 +81,56 @@ def patch_common(source: str) -> str:
 
 def patch_filesystem(source: str) -> str:
     signature = "long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE)"
-    start, end = _function_span(source, signature)
-    block = source[start:end]
-    impl_signature = "static long Hijacked_FS_FOpenFileRead_Impl(const char *filename, fileHandle_t *file, qboolean uniqueFILE)"
-    block = _replace_once(block, signature, impl_signature, "FS_FOpenFileRead implementation rename")
-    wrapper = r'''
-
-long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE)
-{
-    long hijackedLen;
-    int hijackedErrno;
-    Com_Printf("HIJACKED_RESOLVE|request|file=%s|unique=%d\n", filename ? filename : "<null>", uniqueFILE);
-    hijackedLen = Hijacked_FS_FOpenFileRead_Impl(filename, file, uniqueFILE);
-    hijackedErrno = errno;
-    Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\n",
-        filename ? filename : "<null>", hijackedLen, file ? *file : 0, hijackedErrno);
-    errno = hijackedErrno;
-    return hijackedLen;
-}'''
-    return source[:start] + block + wrapper + source[end:]
+    start = source.index(signature)
+    next_fn = source.index("\n/*\n=================\nFS_FindVM", start)
+    block = source[start:next_fn]
+    entry = signature + "\n{"
+    block = _replace_once(
+        block,
+        entry,
+        entry + '\n\tCom_Printf("HIJACKED_RESOLVE|request|file=%s|unique=%d\\n", filename ? filename : "<null>", uniqueFILE);',
+        "FS_FOpenFileRead entry",
+    )
+    block = block.replace(
+        "\t\t\t\treturn len;",
+        '\t\t\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\\n", filename, len, file ? *file : 0, errno); return len; }',
+    )
+    block = block.replace(
+        "\t\t\t\treturn len;",
+        '\t\t\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\\n", filename, len, file ? *file : 0, errno); return len; }',
+    )
+    block = _replace_once(
+        block,
+        "\t\treturn -1;",
+        '\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=-1|handle=0|errno=%d\\n", filename, errno); return -1; }',
+        "FS_FOpenFileRead missing return",
+    )
+    block = _replace_once(
+        block,
+        "\t\treturn 0;",
+        '\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=0|handle=0|errno=%d\\n", filename, errno); return 0; }',
+        "FS_FOpenFileRead existence return",
+    )
+    return source[:start] + block + source[next_fn:]
 
 
 def patch_server(source: str) -> str:
-    source = _replace_once(
-        source,
-        "void SV_SpawnServer( char *server, qboolean killBots ) {",
-        "void SV_SpawnServer( char *server, qboolean killBots ) {\n\tCom_Printf(\"HIJACKED_SERVER|SpawnServer:begin|map=%s|killBots=%d\\n\", server ? server : \"<null>\", killBots);",
-        "SV_SpawnServer entry",
-    )
-    source = _replace_once(
-        source,
-        "\tCL_MapLoading();",
-        "\tCom_Printf(\"HIJACKED_SERVER|CL_MapLoading:before\\n\");\n\tCL_MapLoading();\n\tCom_Printf(\"HIJACKED_SERVER|CL_MapLoading:after\\n\");",
-        "CL_MapLoading",
-    )
-    source = _replace_once(
-        source,
-        '\tCM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );',
-        '\tCom_Printf("HIJACKED_SERVER|CM_LoadMap:before|map=%s\\n", server);\n\tCM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );\n\tCom_Printf("HIJACKED_SERVER|CM_LoadMap:after|checksum=%d\\n", checksum);',
-        "CM_LoadMap",
-    )
-    source = _replace_once(
-        source,
-        "\tSV_InitGameProgs();",
-        "\tCom_Printf(\"HIJACKED_SERVER|InitGameProgs:before\\n\");\n\tSV_InitGameProgs();\n\tCom_Printf(\"HIJACKED_SERVER|InitGameProgs:after\\n\");",
-        "SV_InitGameProgs",
-    )
-    source = _replace_once(
-        source,
-        "\tsv.state = SS_GAME;",
-        "\tsv.state = SS_GAME;\n\tCom_Printf(\"HIJACKED_SERVER|SpawnServer:ready|map=%s\\n\", server);",
-        "SV ready state",
-    )
+    source = _replace_once(source, "void SV_SpawnServer( char *server, qboolean killBots ) {", "void SV_SpawnServer( char *server, qboolean killBots ) {\n\tCom_Printf(\"HIJACKED_SERVER|SpawnServer:begin|map=%s|killBots=%d\\n\", server ? server : \"<null>\", killBots);", "SV_SpawnServer entry")
+    source = _replace_once(source, "\tCL_MapLoading();", "\tCom_Printf(\"HIJACKED_SERVER|CL_MapLoading:before\\n\");\n\tCL_MapLoading();\n\tCom_Printf(\"HIJACKED_SERVER|CL_MapLoading:after\\n\");", "CL_MapLoading")
+    source = _replace_once(source, '\tCM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );', '\tCom_Printf("HIJACKED_SERVER|CM_LoadMap:before|map=%s\\n", server);\n\tCM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );\n\tCom_Printf("HIJACKED_SERVER|CM_LoadMap:after|checksum=%d\\n", checksum);', "CM_LoadMap")
+    source = _replace_once(source, "\tSV_InitGameProgs();", "\tCom_Printf(\"HIJACKED_SERVER|InitGameProgs:before\\n\");\n\tSV_InitGameProgs();\n\tCom_Printf(\"HIJACKED_SERVER|InitGameProgs:after\\n\");", "SV_InitGameProgs")
+    source = _replace_once(source, "\tsv.state = SS_GAME;", "\tsv.state = SS_GAME;\n\tCom_Printf(\"HIJACKED_SERVER|SpawnServer:ready|map=%s\\n\", server);", "SV ready state")
     return source
 
 
 def patch_world(source: str) -> str:
-    source = _replace_once(
-        source,
-        "void RE_LoadWorldMap( const char *name ) {",
-        "void RE_LoadWorldMap( const char *name ) {\n\tri.Printf( PRINT_ALL, \"HIJACKED_WORLD|LoadWorld:begin|%s\\n\", name ? name : \"<null>\" );",
-        "RE_LoadWorldMap entry",
-    )
+    source = _replace_once(source, "void RE_LoadWorldMap( const char *name ) {", "void RE_LoadWorldMap( const char *name ) {\n\tri.Printf( PRINT_ALL, \"HIJACKED_WORLD|LoadWorld:begin|%s\\n\", name ? name : \"<null>\" );", "RE_LoadWorldMap entry")
     fs_variants = ["    ri.FS_ReadFile( name, &buffer.v );", "\tri.FS_ReadFile( name, &buffer.v );"]
     matches = [v for v in fs_variants if v in source]
     if len(matches) != 1:
         raise ValueError(f"expected one FS_ReadFile world marker, found {len(matches)}")
     old = matches[0]
-    source = _replace_once(
-        source,
-        old,
-        old + '\n\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|FS_ReadFile:after|buffer=%p\\n", buffer.v );',
-        "world FS_ReadFile",
-    )
-
+    source = _replace_once(source, old, old + '\n\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|FS_ReadFile:after|buffer=%p\\n", buffer.v );', "world FS_ReadFile")
     stages = (
         ("R_LoadShaders( &header->lumps[LUMP_SHADERS] );", "shaders"),
         ("R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );", "lightmaps"),
@@ -171,19 +147,9 @@ def patch_world(source: str) -> str:
     for statement, label in stages:
         tabbed = "\t" + statement
         candidate = tabbed if tabbed in source else "    " + statement
-        replacement = (
-            f'\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|Lump:{label}:before\\n" );\n'
-            + candidate
-            + f'\n\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|Lump:{label}:after\\n" );'
-        )
+        replacement = f'\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|Lump:{label}:before\\n" );\n' + candidate + f'\n\tri.Printf( PRINT_ALL, "HIJACKED_WORLD|Lump:{label}:after\\n" );'
         source = _replace_once(source, candidate, replacement, f"world {label}")
-
-    source = _replace_once(
-        source,
-        "\ttr.world = &s_worldData;",
-        "\ttr.world = &s_worldData;\n\tri.Printf( PRINT_ALL, \"HIJACKED_WORLD|LoadWorld:complete|surfaces=%d|shaders=%d\\n\", s_worldData.numsurfaces, s_worldData.numShaders );",
-        "world completion",
-    )
+    source = _replace_once(source, "\ttr.world = &s_worldData;", "\ttr.world = &s_worldData;\n\tri.Printf( PRINT_ALL, \"HIJACKED_WORLD|LoadWorld:complete|surfaces=%d|shaders=%d\\n\", s_worldData.numsurfaces, s_worldData.numShaders );", "world completion")
     return source
 
 
