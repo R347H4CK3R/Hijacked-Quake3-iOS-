@@ -179,6 +179,7 @@ jobs:
           mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
           rm -f "$APP/baseq3/ci-placeholder.cfg"
           cp "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" "$APP/baseq3/hijacked-openarena-runtime.pk3"
+          cp -R "$RUNNER_TEMP/openarena-filtered/." "$APP/baseq3/"
           cp "$RUNNER_TEMP/OpenArena-COPYING.txt" "$APP/baseq3/OpenArena-COPYING.txt"
           for NAME in qagame cgame ui; do
             cp "$RUNNER_TEMP/qvms/vm/$NAME.qvm" "$APP/baseq3/vm/$NAME.qvm"
@@ -214,6 +215,11 @@ jobs:
           print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
           PY
           test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/models/players/sarge/lower.md3"
+          test -s "$APP/baseq3/models/weapons2/machinegun/machinegun.md3"
+          test -s "$APP/baseq3/sound/misc/menu1.wav"
+          test -d "$APP/baseq3/scripts"
+          test -d "$APP/baseq3/textures"
 
       - name: Package IPA
         run: |
@@ -227,6 +233,9 @@ jobs:
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/cgame.qvm'
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/hijacked-openarena-runtime.pk3'
+          unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/lower.md3'
+          unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/weapons2/machinegun/machinegun.md3'
+          unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/sound/misc/menu1.wav'
 
       - uses: actions/upload-artifact@v4
         with:
