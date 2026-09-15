@@ -21,13 +21,6 @@ def inject_after_once(source: str, marker: str, addition: str, label: str) -> st
 def patch_filesystem(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
 
-    source = replace_once(
-        source,
-        '#include "unzip.h"\n',
-        '#include "unzip.h"\n#include <errno.h>\n',
-        "unzip include",
-    )
-
     # Keep this exact legacy block intact because device-ipa.yml uses its
     # presence as the guard against inserting a duplicate declaration block.
     legacy_prefix = '''#ifdef IOS
@@ -47,14 +40,22 @@ static void HijackedFsTraceDetail(const char *stage, const char *detail);
 
 '''
 
-    if legacy_prefix in source:
-        source = source.replace(legacy_prefix, legacy_prefix + detail_prefix, 1)
-    else:
+    # HIJACKED_FS_TRACE_DETAIL is used by filesystem helpers that appear before
+    # FS_Startup in files.c, so its macro must be declared near the includes,
+    # before the first injected call.  The implementation remains later.
+    source = replace_once(
+        source,
+        '#include "unzip.h"\n',
+        '#include "unzip.h"\n#include <errno.h>\n\n' + detail_prefix,
+        "unzip include",
+    )
+
+    if legacy_prefix not in source:
         startup_marker = 'static void FS_Startup( const char *gameName )\n'
         source = replace_once(
             source,
             startup_marker,
-            legacy_prefix + detail_prefix + startup_marker,
+            legacy_prefix + startup_marker,
             "FS_Startup trace declaration anchor",
         )
 
@@ -182,6 +183,7 @@ static void HijackedFsTrace(const char *message)
 
     required = (
         legacy_prefix.strip(),
+        detail_prefix.strip(),
         'HIJACKED_FS_TRACE_DETAIL',
         'HIJACKED_FS|%lu|%d|%s|%s|errno=%d',
         'FS_AddGameDirectory:path',
@@ -195,6 +197,11 @@ static void HijackedFsTrace(const char *message)
     for marker in required:
         if marker not in source:
             raise ValueError(f"missing required flight-recorder marker: {marker}")
+
+    first_detail_use = source.index('HIJACKED_FS_TRACE_DETAIL("FS_AddGameDirectory:path"')
+    detail_declaration = source.index('#define HIJACKED_FS_TRACE_DETAIL(stage, detail)')
+    if detail_declaration >= first_detail_use:
+        raise ValueError("filesystem detail trace macro must be declared before first use")
 
     path.write_text(source, encoding="utf-8")
 
