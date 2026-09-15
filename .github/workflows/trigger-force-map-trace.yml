@@ -1,0 +1,26 @@
+name: Trigger Forced Hijacked Trace Build
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/trigger-force-map-trace.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch forced-map IPA workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            /repos/${{ github.repository }}/actions/workflows/device-ipa-force-map.yml/dispatches \
+            -f ref='dev/hijacked-port'
