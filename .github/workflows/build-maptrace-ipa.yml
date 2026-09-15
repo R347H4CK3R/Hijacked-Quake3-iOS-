@@ -8,7 +8,7 @@ on:
       - '.github/workflows/build-maptrace-ipa.yml'
   workflow_dispatch:
 
-# Manual rebuild trigger: 2026-09-14T22:00:00-05:00
+# Client sound registration bypass: 2026-09-15
 
 jobs:
   qvms:
@@ -32,12 +32,47 @@ jobs:
           from pathlib import Path
           p = Path('code/cgame/cg_players.c')
           s = p.read_text()
+
           old = 'CG_Error( "DEFAULT_MODEL (%s) failed to register", DEFAULT_MODEL );'
           new = 'CG_Printf( "WARNING: DEFAULT_MODEL (%s) unavailable; continuing without player media\\n", DEFAULT_MODEL );'
           if s.count(old) != 1:
               raise SystemExit(f'expected one DEFAULT_MODEL fatal path, found {s.count(old)}')
-          p.write_text(s.replace(old, new, 1))
+          s = s.replace(old, new, 1)
+
+          old_sounds = '''\t// sounds
+\tdir = ci->modelName;
+\tfallback = (cgs.gametype >= GT_TEAM) ? DEFAULT_TEAM_MODEL : DEFAULT_MODEL;
+
+\tfor ( i = 0 ; i < MAX_CUSTOM_SOUNDS ; i++ ) {
+\t\ts = cg_customSoundNames[i];
+\t\tif ( !s ) {
+\t\t\tbreak;
+\t\t}
+\t\tci->sounds[i] = 0;
+\t\t// if the model didn't load use the sounds of the default model
+\t\tif (modelloaded) {
+\t\t\tci->sounds[i] = trap_S_RegisterSound( va("sound/player/%s/%s", dir, s + 1), qfalse );
+\t\t}
+\t\tif ( !ci->sounds[i] ) {
+\t\t\tci->sounds[i] = trap_S_RegisterSound( va("sound/player/%s/%s", fallback, s + 1), qfalse );
+\t\t}
+\t}
+'''
+          new_sounds = '''\t// iOS Hijacked test build: optional player voice registration can stall
+\t// during client initialization. Keep handles empty so map loading can proceed.
+\tCG_Printf( "HIJACKED_CGAME|ClientSounds:skip|client=%d|model=%s\\n", clientNum, ci->modelName );
+\tfor ( i = 0 ; i < MAX_CUSTOM_SOUNDS ; i++ ) {
+\t\tci->sounds[i] = 0;
+\t}
+\tCG_Printf( "HIJACKED_CGAME|ClientSounds:complete|client=%d\\n", clientNum );
+'''
+          if s.count(old_sounds) != 1:
+              raise SystemExit(f'expected one player sound registration block, found {s.count(old_sounds)}')
+          s = s.replace(old_sounds, new_sounds, 1)
+          p.write_text(s)
           PY
+          grep -F 'HIJACKED_CGAME|ClientSounds:skip' code/cgame/cg_players.c
+          grep -F 'HIJACKED_CGAME|ClientSounds:complete' code/cgame/cg_players.c
           cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_CLIENT=OFF \
