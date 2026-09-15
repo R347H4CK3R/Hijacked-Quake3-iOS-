@@ -14,17 +14,17 @@ def test_full_diagnostics_patcher_exists_and_covers_critical_boundaries():
 
     common = '''
 void QDECL Com_Printf( const char *fmt, ... ) {
-    va_list argptr;
-    char msg[MAXPRINTMSG];
-    va_start (argptr,fmt);
-    Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
-    va_end (argptr);
+	va_list argptr;
+	char msg[MAXPRINTMSG];
+	va_start (argptr,fmt);
+	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
+	va_end (argptr);
 }
 void QDECL Com_Error( int code, const char *fmt, ... ) {
-    va_list argptr;
-    va_start (argptr,fmt);
-    Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
-    va_end (argptr);
+	va_list argptr;
+	va_start (argptr,fmt);
+	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
+	va_end (argptr);
 }
 '''
     patched_common = patch_common(common)
@@ -34,8 +34,8 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
     filesystem = '''
 long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE)
 {
-    *file = 0;
-    return -1;
+	*file = 0;
+	return -1;
 }
 '''
     patched_fs = patch_filesystem(filesystem)
@@ -44,10 +44,10 @@ long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueF
 
     server = '''
 void SV_SpawnServer( char *server, qboolean killBots ) {
-    CL_MapLoading();
-    CM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );
-    SV_InitGameProgs();
-    sv.state = SS_GAME;
+	CL_MapLoading();
+	CM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );
+	SV_InitGameProgs();
+	sv.state = SS_GAME;
 }
 '''
     patched_server = patch_server(server)
@@ -58,20 +58,20 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
     world = '''
 void RE_LoadWorldMap( const char *name ) {
-    ri.FS_ReadFile( name, &buffer.v );
-    header = (dheader_t *)buffer.b;
-    R_LoadShaders( &header->lumps[LUMP_SHADERS] );
-    R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
-    R_LoadPlanes (&header->lumps[LUMP_PLANES]);
-    R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
-    R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
-    R_LoadMarksurfaces (&header->lumps[LUMP_LEAFSURFACES]);
-    R_LoadNodesAndLeafs (&header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS]);
-    R_LoadSubmodels (&header->lumps[LUMP_MODELS]);
-    R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
-    R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
-    R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
-    tr.world = &s_worldData;
+	ri.FS_ReadFile( name, &buffer.v );
+	header = (dheader_t *)buffer.b;
+	R_LoadShaders( &header->lumps[LUMP_SHADERS] );
+	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
+	R_LoadPlanes (&header->lumps[LUMP_PLANES]);
+	R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
+	R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
+	R_LoadMarksurfaces (&header->lumps[LUMP_LEAFSURFACES]);
+	R_LoadNodesAndLeafs (&header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS]);
+	R_LoadSubmodels (&header->lumps[LUMP_MODELS]);
+	R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
+	R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
+	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
+	tr.world = &s_worldData;
 }
 '''
     patched_world = patch_world(world)
