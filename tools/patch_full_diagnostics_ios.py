@@ -49,7 +49,7 @@ def patch_common(source: str) -> str:
         marker = "    Q_vsnprintf (msg, sizeof(msg), fmt, argptr);\n    va_end (argptr);"
     injected = marker + '''
 #ifdef IOS
-    if (!Q_strncmp(msg, "HIJACKED_", 9)) {
+    if (!strncmp(msg, "HIJACKED_", 9)) {
         const char *hijackedHome = Sys_DefaultHomePath();
         if (hijackedHome && *hijackedHome) {
             char hijackedPath[MAX_OSPATH];
@@ -72,6 +72,8 @@ def patch_common(source: str) -> str:
     e0, e1 = _function_span(source, error_sig)
     block = source[e0:e1]
     marker = "\tQ_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);\n\tva_end (argptr);"
+    if marker not in block:
+        marker = "    Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);\n    va_end (argptr);"
     injected = marker + '\n\tCom_Printf("HIJACKED_DIAG|Com_Error|code=%d|message=%s\\n", code, com_errorMessage);'
     block = _replace_once(block, marker, injected, "Com_Error diagnostic")
     return source[:e0] + block + source[e1:]
