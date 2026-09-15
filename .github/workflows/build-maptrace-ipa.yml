@@ -149,52 +149,43 @@ jobs:
       - name: Build redistributable OpenArena runtime asset pack
         run: |
           set -euo pipefail
-          OA_ZIP="$RUNNER_TEMP/openarena-0.8.8.zip"
-          OA_ROOT="$RUNNER_TEMP/openarena"
+          OA_REPO="$RUNNER_TEMP/queep-3-arena"
           OA_FILTERED="$RUNNER_TEMP/openarena-filtered"
-          OA_URL='https://sourceforge.net/projects/oarena/files/openarena-0.8.8.zip/download'
-          OA_SHA256='5a8faf7f5b51f351b0a1618c06b6b98a5f1a6758f1d39818de2c87df2a0bac4a'
+          OA_COMMIT='8ff60576be4e5c979242948951872dcc499506b2'
 
-          curl -L --fail --retry 3 "$OA_URL" -o "$OA_ZIP"
-          ACTUAL="$(shasum -a 256 "$OA_ZIP" | awk '{print $1}')"
-          test "$ACTUAL" = "$OA_SHA256"
+          git clone --filter=blob:none --no-checkout https://github.com/Usnul/queep-3-arena.git "$OA_REPO"
+          cd "$OA_REPO"
+          git sparse-checkout init --cone
+          git sparse-checkout set \
+            assets/extracted/models \
+            assets/extracted/sound \
+            assets/extracted/textures \
+            assets/extracted/gfx \
+            assets/extracted/sprites \
+            assets/extracted/scripts \
+            assets/extracted/icons
+          git checkout "$OA_COMMIT"
+          test "$(git rev-parse HEAD)" = "$OA_COMMIT"
 
-          mkdir -p "$OA_ROOT" "$OA_FILTERED"
-          unzip -q "$OA_ZIP" \
-            'openarena-0.8.8/baseoa/pak0.pk3' \
-            'openarena-0.8.8/baseoa/pak2-players.pk3' \
-            'openarena-0.8.8/baseoa/pak4-textures.pk3' \
-            'openarena-0.8.8/baseoa/pak6-misc.pk3' \
-            'openarena-0.8.8/baseoa/pak6-patch088.pk3' \
-            'openarena-0.8.8/COPYING' \
-            -d "$OA_ROOT"
-
-          for PK3 in \
-            "$OA_ROOT/openarena-0.8.8/baseoa/pak0.pk3" \
-            "$OA_ROOT/openarena-0.8.8/baseoa/pak2-players.pk3" \
-            "$OA_ROOT/openarena-0.8.8/baseoa/pak4-textures.pk3" \
-            "$OA_ROOT/openarena-0.8.8/baseoa/pak6-misc.pk3" \
-            "$OA_ROOT/openarena-0.8.8/baseoa/pak6-patch088.pk3"; do
-            test -s "$PK3"
-            unzip -oq "$PK3" \
-              'models/*' 'sound/*' 'textures/*' 'gfx/*' 'sprites/*' 'scripts/*' 'music/*' \
-              -d "$OA_FILTERED" || true
+          mkdir -p "$OA_FILTERED"
+          for DIR in models sound textures gfx sprites scripts icons; do
+            if [ -d "$OA_REPO/assets/extracted/$DIR" ]; then
+              cp -R "$OA_REPO/assets/extracted/$DIR" "$OA_FILTERED/"
+            fi
           done
-
-          # Keep this pack data-only. The Hijacked build supplies its own QVMs/config/map.
-          rm -rf "$OA_FILTERED/vm" "$OA_FILTERED/maps" "$OA_FILTERED/botfiles"
-          rm -f "$OA_FILTERED/default.cfg" "$OA_FILTERED/q3config.cfg" "$OA_FILTERED/autoexec.cfg"
 
           test -s "$OA_FILTERED/models/players/sarge/lower.md3"
           test -s "$OA_FILTERED/models/weapons2/machinegun/machinegun.md3"
           test -s "$OA_FILTERED/sound/misc/menu1.wav"
 
-          (
-            cd "$OA_FILTERED"
-            /usr/bin/zip -qry "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" .
-          )
+          cd "$OA_FILTERED"
+          /usr/bin/zip -qry "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" .
           test -s "$RUNNER_TEMP/hijacked-openarena-runtime.pk3"
-          cp "$OA_ROOT/openarena-0.8.8/COPYING" "$RUNNER_TEMP/OpenArena-COPYING.txt"
+
+          curl -L --fail --retry 3 \
+            https://raw.githubusercontent.com/drdator/q3edit/main/public/openarena/COPYING \
+            -o "$RUNNER_TEMP/OpenArena-COPYING.txt"
+          test -s "$RUNNER_TEMP/OpenArena-COPYING.txt"
 
       - name: Inject QVMs, runtime assets and verified Hijacked BSP
         run: |
@@ -245,7 +236,6 @@ jobs:
           PY
           test -s "$APP/baseq3/maps/hijacked.bsp"
 
-          # Fail the CI build rather than hand off another IPA missing known critical runtime media.
           unzip -Z1 "$APP/baseq3/hijacked-openarena-runtime.pk3" | grep -Fx 'models/players/sarge/lower.md3'
           unzip -Z1 "$APP/baseq3/hijacked-openarena-runtime.pk3" | grep -Fx 'models/weapons2/machinegun/machinegun.md3'
           unzip -Z1 "$APP/baseq3/hijacked-openarena-runtime.pk3" | grep -Fx 'sound/misc/menu1.wav'
