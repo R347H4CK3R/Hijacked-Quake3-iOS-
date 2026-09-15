@@ -49,6 +49,10 @@ def _apply_after_com_init_patch() -> None:
             patch_filesystem(files_c)
             print("sitecustomize: filesystem flight recorder applied")
 
+            from tools.patch_map_open_trace import patch_filesystem_reads
+            patch_filesystem_reads(files_c)
+            print("sitecustomize: Hijacked BSP/map-open trace applied")
+
         sys_main = runtime_root / "Quake3" / "sys" / "sys_main.c"
         _patch_forced_hijacked_launch(sys_main)
 
