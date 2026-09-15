@@ -1,5 +1,6 @@
 name: Hijacked Device IPA Full Diagnostics
 
+# verified compile trigger 2026-09-15
 on:
   push:
     branches:
