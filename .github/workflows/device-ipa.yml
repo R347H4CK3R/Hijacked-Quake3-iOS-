@@ -1,4 +1,4 @@
-# Triggered after standalone Com_Init startup fix.
+# Triggered after first-frame/LiveContainer path diagnostics update.
 name: Unsigned iPhone IPA
 
 on:
@@ -8,6 +8,7 @@ on:
       - '.github/workflows/device-ipa.yml'
       - 'tools/patch_quake3_ios.py'
       - 'tools/patch_com_init_ios.py'
+      - 'tests/test_patch_quake3_ios.py'
       - 'runtime/hijacked-device.bsp.zlib.b64'
       - 'runtime/HijackedConfig.cfg'
   workflow_dispatch:
@@ -16,6 +17,13 @@ jobs:
   qvms:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Run startup patch regression tests
+        run: |
+          python3 -m pip install --disable-pip-version-check pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
+
       - name: Fetch pinned ioquake3 source
         run: |
           git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
@@ -97,11 +105,16 @@ jobs:
               p.write_text(s)
           PY
           grep -F 'var selectedMap = "hijacked"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
-          grep -F 'var botMatch = true' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F 'var botMatch = false' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F '"fs_basepath", Bundle.main.resourcePath!' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F '"fs_apppath", Bundle.main.resourcePath!' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
+          grep -F '"logfile", "2"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F '"com_standalone", "1"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/GameViewController.swift"
           grep -F 'storyboardIdentifier="HijackedGameVC"' "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS/Base.lproj/Main.storyboard"
           grep -F 'Com_Init:beforeFilesystem' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
           grep -F 'Com_Init:complete' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/common.c"
+          grep -F 'Sys_Startup:firstFrame:before' "$RUNNER_TEMP/Quake3-iOS/Quake3/sys/sys_main.c"
+          grep -F 'Sys_Startup:firstFrame:after' "$RUNNER_TEMP/Quake3-iOS/Quake3/sys/sys_main.c"
           grep -F 'static void HijackedFsTrace(const char *message);' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c"
 
       - name: Stage expected baseq3 bundle resource
