@@ -11,6 +11,7 @@ def test_game_view_controller_launches_hijacked_as_direct_non_bot_map():
 class GameViewController: UIViewController {
     var selectedMap = ""
     var botMatch = false
+    var bots = [(name: String, skill: Float, icon: String)]()
     let defaults = UserDefaults()
     func launch() {
         let documentsDir = "/tmp/Documents"
@@ -30,6 +31,13 @@ class GameViewController: UIViewController {
                 argv.append(String(self.selectedDifficulty))
             }
         }
+
+        if self.botMatch {
+            for bot in self.bots {
+                argv.append("+addbot")
+                argv.append(bot.name)
+            }
+        }
     }
 }
 '''
@@ -45,6 +53,7 @@ class GameViewController: UIViewController {
     assert 'argv.append("+spmap")' not in patched
     assert 'argv.append("+g_spSkill")' not in patched
     assert 'argv.append("+map")' in patched
+    assert 'argv.append("+addbot")' in patched
 
 
 def test_storyboard_assigns_hijacked_game_identifier():
