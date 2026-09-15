@@ -1,0 +1,178 @@
+name: Hijacked Device IPA Final
+
+on:
+  push:
+    branches:
+      - dev/hijacked-port
+    paths:
+      - '.github/workflows/device-ipa-final.yml'
+  workflow_dispatch:
+
+jobs:
+  final-device:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run patch regression tests
+        run: |
+          python3 -m pip install --disable-pip-version-check pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
+
+      - name: Build open baseq3 QVMs
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('code/cgame/cg_players.c')
+          s = p.read_text()
+          old = 'CG_Error( "DEFAULT_MODEL (%s) failed to register", DEFAULT_MODEL );'
+          new = 'CG_Printf( "WARNING: DEFAULT_MODEL (%s) unavailable; continuing without player media\\n", DEFAULT_MODEL );'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected one DEFAULT_MODEL fatal path, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+          mkdir -p "$RUNNER_TEMP/qvms/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -s "$SRC"
+            cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+          done
+
+      - name: Fetch pinned Quake3-iOS runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Apply Hijacked runtime patches
+        run: |
+          PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          grep -F 'FS_FOpenFileRead:filename' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c"
+          grep -F 'HijackedMapLaunch:afterExecute' "$RUNNER_TEMP/Quake3-iOS/Quake3/sys/sys_main.c"
+
+      - name: Stage baseq3 placeholder
+        run: |
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          mkdir -p "$BASEQ3"
+          printf '%s\n' '// CI placeholder' > "$BASEQ3/ci-placeholder.cfg"
+
+      - name: Build unsigned arm64 app
+        run: |
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -scheme Quake3-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) STANDALONE' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+          APP="$(find "$DERIVED/Build/Products" -type d -path '*Release-iphoneos/Quake3-iOS.app' -print -quit)"
+          test -n "$APP"
+          test -x "$APP/Quake3-iOS"
+          printf '%s\n' "$APP" > "$RUNNER_TEMP/device-app-path.txt"
+
+      - name: Inject Hijacked runtime assets
+        run: |
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps" "$APP/baseq3/textures/hijacked"
+          rm -f "$APP/baseq3/ci-placeholder.cfg"
+          for NAME in qagame cgame ui; do
+            cp "$RUNNER_TEMP/qvms/vm/$NAME.qvm" "$APP/baseq3/vm/$NAME.qvm"
+            test -s "$APP/baseq3/vm/$NAME.qvm"
+          done
+          printf '%s\n' \
+            'seta com_introplayed "1"' \
+            'seta sv_pure "0"' \
+            'seta vm_game "1"' \
+            'seta vm_cgame "1"' \
+            'seta vm_ui "1"' \
+            'seta bot_enable "0"' \
+            'seta com_maxfps "60"' \
+            'seta r_fullscreen "1"' \
+            > "$APP/baseq3/default.cfg"
+          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          export BSP_OUT="$APP/baseq3/maps/hijacked.bsp"
+          export TEX_OUT="$APP/baseq3/textures/hijacked/visual.tga"
+          python3 - <<'PY'
+          import base64, hashlib, os, struct, zlib
+          from pathlib import Path
+
+          encoded = ''.join(Path('runtime/hijacked-device.bsp.zlib.b64').read_text().split())
+          data = zlib.decompress(base64.b64decode(encoded))
+          if data[:4] != b'IBSP':
+              raise SystemExit(f'bad BSP magic: {data[:4]!r}')
+          version = struct.unpack_from('<i', data, 4)[0]
+          if version != 46:
+              raise SystemExit(f'bad BSP version: {version}')
+          for index in range(17):
+              off, length = struct.unpack_from('<ii', data, 8 + index * 8)
+              if off < 0 or length < 0 or off + length > len(data):
+                  raise SystemExit(f'invalid BSP lump {index}: {off}+{length}>{len(data)}')
+          bsp = Path(os.environ['BSP_OUT'])
+          bsp.write_bytes(data)
+
+          width = height = 64
+          header = bytearray(18)
+          header[2] = 2
+          header[12:14] = struct.pack('<H', width)
+          header[14:16] = struct.pack('<H', height)
+          header[16] = 24
+          header[17] = 0x20
+          pixels = bytearray()
+          for y in range(height):
+              for x in range(width):
+                  if ((x // 8) + (y // 8)) & 1:
+                      r, g, b = 230, 230, 230
+                  else:
+                      r, g, b = 40, 170, 220
+                  pixels += bytes((b, g, r))
+          tex = Path(os.environ['TEX_OUT'])
+          tex.write_bytes(header + pixels)
+
+          print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+          print(f'Texture bytes={tex.stat().st_size} sha256={hashlib.sha256(tex.read_bytes()).hexdigest()}')
+          PY
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/textures/hijacked/visual.tga"
+
+      - name: Package and validate IPA
+        run: |
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-final-unsigned.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
+          test -s Hijacked-Quake3-iOS-final-unsigned.ipa
+          unzip -t Hijacked-Quake3-iOS-final-unsigned.ipa
+          unzip -l Hijacked-Quake3-iOS-final-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l Hijacked-Quake3-iOS-final-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
+          unzip -l Hijacked-Quake3-iOS-final-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/textures/hijacked/visual.tga'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hijacked-Quake3-iOS-final-unsigned-IPA
+          path: Hijacked-Quake3-iOS-final-unsigned.ipa
+          if-no-files-found: error
