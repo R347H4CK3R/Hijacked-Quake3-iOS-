@@ -1,0 +1,79 @@
+name: Diagnose Full Diagnostics Xcode
+
+on:
+  push:
+    branches: [dev/hijacked-port]
+    paths:
+      - '.github/workflows/diagnose-full-diagnostics-xcode.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and patch pinned runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          cd "$GITHUB_WORKSPACE"
+          PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_full_diagnostics_ios.py "$RUNNER_TEMP/Quake3-iOS"
+
+      - name: Add cgame render tracing
+        run: |
+          export CL_CGAME="$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['CL_CGAME'])
+          s = p.read_text()
+          old = '\tcase CG_R_LOADWORLDMAP:\n\t\tre.LoadWorld( VMA(1) );\n\t\treturn 0; '
+          new = '\tcase CG_R_LOADWORLDMAP:\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:before|%s\\n", (const char *)VMA(1) );\n\t\tre.LoadWorld( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:after|%s\\n", (const char *)VMA(1) );\n\t\treturn 0; '
+          if s.count(old) != 1: raise SystemExit(f'loadworld marker count={s.count(old)}')
+          s = s.replace(old, new, 1)
+          old = '\tcase CG_R_RENDERSCENE:\n\t\tre.RenderScene( VMA(1) );\n\t\treturn 0;'
+          new = '\tcase CG_R_RENDERSCENE:\n\t\t{\n\t\t\tstatic int hijackedRenderSceneCount = 0;\n\t\t\tif ( hijackedRenderSceneCount < 12 ) Com_Printf( "HIJACKED_RENDER|RenderScene:before|%d\\n", hijackedRenderSceneCount );\n\t\t\tre.RenderScene( VMA(1) );\n\t\t\tif ( hijackedRenderSceneCount < 12 ) Com_Printf( "HIJACKED_RENDER|RenderScene:after|%d\\n", hijackedRenderSceneCount );\n\t\t\thijackedRenderSceneCount++;\n\t\t}\n\t\treturn 0;'
+          if s.count(old) != 1: raise SystemExit(f'renderscene marker count={s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Stage baseq3 placeholder
+        run: |
+          mkdir -p "$HOME/Library/Application Support/quake3/baseq3"
+          printf '%s\n' '// CI placeholder' > "$HOME/Library/Application Support/quake3/baseq3/ci-placeholder.cfg"
+
+      - name: Compile and emit concise errors
+        id: compile
+        shell: bash
+        run: |
+          set -o pipefail
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -scheme Quake3-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) STANDALONE' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo '=== HIJACKED_XCODE_ERRORS ==='
+            grep -nE '(^|[[:space:]])(error:|fatal error:)|Undefined symbols|ld: ' "$RUNNER_TEMP/xcodebuild.log" | tail -120 || true
+            exit "$STATUS"
+          fi
+
+      - name: Upload Xcode log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-diagnostics-xcode-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: error
