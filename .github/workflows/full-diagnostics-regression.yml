@@ -5,6 +5,8 @@ on:
     branches: [dev/hijacked-port]
     paths:
       - '.github/workflows/full-diagnostics-regression.yml'
+      - 'tools/patch_full_diagnostics_ios.py'
+      - 'tests/test_full_diagnostics.py'
   workflow_dispatch:
 
 jobs:
