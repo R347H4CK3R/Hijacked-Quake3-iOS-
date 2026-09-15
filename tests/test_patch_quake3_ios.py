@@ -6,7 +6,7 @@ from tools.patch_quake3_ios import (
 )
 
 
-def test_game_view_controller_defaults_to_hijacked_and_safe_name():
+def test_game_view_controller_launches_hijacked_as_direct_non_bot_map():
     source = '''
 class GameViewController: UIViewController {
     var selectedMap = ""
@@ -16,15 +16,35 @@ class GameViewController: UIViewController {
         let documentsDir = "/tmp/Documents"
         Sys_SetHomeDir(documentsDir)
         var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName")]
+
+        if !self.selectedMap.isEmpty {
+            if self.botMatch {
+                argv.append("+map")
+            } else {
+                argv.append("+spmap")
+            }
+            argv.append(self.selectedMap)
+
+            if !self.botMatch {
+                argv.append("+g_spSkill")
+                argv.append(String(self.selectedDifficulty))
+            }
+        }
     }
 }
 '''
     patched = patch_game_view_controller(source)
     assert 'var selectedMap = "hijacked"' in patched
-    assert 'var botMatch = true' in patched
+    assert 'var botMatch = false' in patched
+    assert 'var botMatch = true' not in patched
     assert 'self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"' in patched
     assert '"+set", "fs_basepath", Bundle.main.resourcePath!' in patched
+    assert '"+set", "fs_apppath", Bundle.main.resourcePath!' in patched
     assert '"+set", "fs_homepath", documentsDir' in patched
+    assert '"+set", "logfile", "2"' in patched
+    assert 'argv.append("+spmap")' not in patched
+    assert 'argv.append("+g_spSkill")' not in patched
+    assert 'argv.append("+map")' in patched
 
 
 def test_storyboard_assigns_hijacked_game_identifier():
@@ -48,7 +68,7 @@ def test_app_delegate_launches_hijacked_game_controller_directly():
     assert 'instantiateViewControllerWithIdentifier:@"RootNC"' not in patched
 
 
-def test_sys_main_traces_engine_startup_boundaries():
+def test_sys_main_traces_engine_startup_and_first_frame_boundaries():
     source = '''
 #ifdef IOS
 void Sys_Startup( int argc, char **argv )
@@ -81,4 +101,5 @@ int main( int argc, char **argv )
     assert 'HijackedEngineTrace("Sys_Startup:beforeComInit")' in patched
     assert 'HijackedEngineTrace("Sys_Startup:afterComInit")' in patched
     assert 'HijackedEngineTrace("Sys_Startup:afterNetInit")' in patched
-    assert 'HijackedEngineTrace("Sys_Startup:firstFrame")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:firstFrame:before")' in patched
+    assert 'HijackedEngineTrace("Sys_Startup:firstFrame:after")' in patched
