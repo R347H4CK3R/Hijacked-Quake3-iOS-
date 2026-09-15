@@ -37,10 +37,6 @@ def _patch_swift_direct_map_launch(source: str) -> str:
         return source
 
     lines = source.splitlines(keepends=True)
-    bot_indexes = [i for i, line in enumerate(lines) if line.strip() == 'if self.botMatch {']
-    if len(bot_indexes) != 1:
-        raise ValueError(f"expected exactly one botMatch map selector, found {len(bot_indexes)}")
-    i = bot_indexes[0]
     expected = (
         'if self.botMatch {',
         'argv.append("+map")',
@@ -48,27 +44,40 @@ def _patch_swift_direct_map_launch(source: str) -> str:
         'argv.append("+spmap")',
         '}',
     )
-    actual = tuple(lines[i + offset].strip() for offset in range(5))
-    if actual != expected:
-        raise ValueError(f"unexpected botMatch map selector shape: {actual!r}")
+    bot_indexes = []
+    for i, line in enumerate(lines):
+        if line.strip() != 'if self.botMatch {':
+            continue
+        if i + len(expected) > len(lines):
+            continue
+        actual = tuple(lines[i + offset].strip() for offset in range(len(expected)))
+        if actual == expected:
+            bot_indexes.append(i)
+    if len(bot_indexes) != 1:
+        raise ValueError(f"expected exactly one +map/+spmap botMatch selector, found {len(bot_indexes)}")
+    i = bot_indexes[0]
     indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
     newline = '\r\n' if lines[i].endswith('\r\n') else '\n'
-    lines[i:i + 5] = [f'{indent}argv.append("+map"){newline}']
+    lines[i:i + len(expected)] = [f'{indent}argv.append("+map"){newline}']
 
-    skill_indexes = [j for j, line in enumerate(lines) if line.strip() == 'if !self.botMatch {']
-    if len(skill_indexes) != 1:
-        raise ValueError(f"expected exactly one single-player skill block, found {len(skill_indexes)}")
-    j = skill_indexes[0]
     expected_skill = (
         'if !self.botMatch {',
         'argv.append("+g_spSkill")',
         'argv.append(String(self.selectedDifficulty))',
         '}',
     )
-    actual_skill = tuple(lines[j + offset].strip() for offset in range(4))
-    if actual_skill != expected_skill:
-        raise ValueError(f"unexpected single-player skill block shape: {actual_skill!r}")
-    del lines[j:j + 4]
+    skill_indexes = []
+    for j, line in enumerate(lines):
+        if line.strip() != 'if !self.botMatch {':
+            continue
+        if j + len(expected_skill) > len(lines):
+            continue
+        actual_skill = tuple(lines[j + offset].strip() for offset in range(len(expected_skill)))
+        if actual_skill == expected_skill:
+            skill_indexes.append(j)
+    if len(skill_indexes) != 1:
+        raise ValueError(f"expected exactly one single-player skill block, found {len(skill_indexes)}")
+    del lines[skill_indexes[0]:skill_indexes[0] + len(expected_skill)]
     return ''.join(lines)
 
 
