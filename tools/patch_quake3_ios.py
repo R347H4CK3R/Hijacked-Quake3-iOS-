@@ -14,8 +14,6 @@ def _replace_once(source: str, old: str, new: str, label: str) -> str:
 
 
 def _replace_once_if_present(source: str, old: str, new: str, label: str) -> str:
-    if new in source and old not in source:
-        return source
     count = source.count(old)
     if count == 0:
         return source
@@ -32,6 +30,92 @@ def _insert_after_first_variant(source: str, variants: tuple[str, ...], suffix: 
         raise ValueError(f"expected exactly one {label} variant, found {len(matches)}")
     marker = matches[0]
     return source.replace(marker, marker + suffix, 1)
+
+
+def _patch_swift_direct_map_launch(source: str) -> str:
+    if 'argv.append("+spmap")' not in source and 'argv.append("+g_spSkill")' not in source:
+        return source
+
+    lines = source.splitlines(keepends=True)
+    bot_indexes = [i for i, line in enumerate(lines) if line.strip() == 'if self.botMatch {']
+    if len(bot_indexes) != 1:
+        raise ValueError(f"expected exactly one botMatch map selector, found {len(bot_indexes)}")
+    i = bot_indexes[0]
+    expected = (
+        'if self.botMatch {',
+        'argv.append("+map")',
+        '} else {',
+        'argv.append("+spmap")',
+        '}',
+    )
+    actual = tuple(lines[i + offset].strip() for offset in range(5))
+    if actual != expected:
+        raise ValueError(f"unexpected botMatch map selector shape: {actual!r}")
+    indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+    newline = '\r\n' if lines[i].endswith('\r\n') else '\n'
+    lines[i:i + 5] = [f'{indent}argv.append("+map"){newline}']
+
+    skill_indexes = [j for j, line in enumerate(lines) if line.strip() == 'if !self.botMatch {']
+    if len(skill_indexes) != 1:
+        raise ValueError(f"expected exactly one single-player skill block, found {len(skill_indexes)}")
+    j = skill_indexes[0]
+    expected_skill = (
+        'if !self.botMatch {',
+        'argv.append("+g_spSkill")',
+        'argv.append(String(self.selectedDifficulty))',
+        '}',
+    )
+    actual_skill = tuple(lines[j + offset].strip() for offset in range(4))
+    if actual_skill != expected_skill:
+        raise ValueError(f"unexpected single-player skill block shape: {actual_skill!r}")
+    del lines[j:j + 4]
+    return ''.join(lines)
+
+
+def _insert_trace_around_engine_calls(source: str) -> str:
+    if 'HijackedEngineTrace("Sys_Startup:beforeComInit")' in source:
+        return source
+
+    lines = source.splitlines(keepends=True)
+    targets = {
+        'CON_Init( );': (
+            'HijackedEngineTrace("Sys_Startup:afterConsoleInit");',
+            'HijackedEngineTrace("Sys_Startup:beforeComInit");',
+        ),
+        'Com_Init( commandLine );': (
+            'HijackedEngineTrace("Sys_Startup:afterComInit");',
+        ),
+        'NET_Init( );': (
+            'HijackedEngineTrace("Sys_Startup:afterNetInit");',
+        ),
+    }
+    indexes: dict[str, int] = {}
+    for statement in targets:
+        matches = [i for i, line in enumerate(lines) if line.strip() == statement]
+        if len(matches) != 1:
+            raise ValueError(f"expected exactly one {statement} statement, found {len(matches)}")
+        indexes[statement] = matches[0]
+
+    output: list[str] = []
+    for line in lines:
+        statement = line.strip()
+        indent = line[: len(line) - len(line.lstrip())]
+        newline = '\r\n' if line.endswith('\r\n') else '\n'
+        if statement == 'CON_Init( );':
+            output.append(line)
+            output.append('#ifdef IOS' + newline)
+            for trace in targets[statement]:
+                output.append(indent + trace + newline)
+            output.append('#endif' + newline)
+        elif statement in ('Com_Init( commandLine );', 'NET_Init( );'):
+            output.append(line)
+            output.append('#ifdef IOS' + newline)
+            for trace in targets[statement]:
+                output.append(indent + trace + newline)
+            output.append('#endif' + newline)
+        else:
+            output.append(line)
+    return ''.join(output)
 
 
 def patch_game_view_controller(source: str) -> str:
@@ -53,30 +137,7 @@ def patch_game_view_controller(source: str) -> str:
         'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_apppath", Bundle.main.resourcePath!, "+set", "logfile", "2", "+set", "fs_homepath", documentsDir]',
         "bundled baseq3 filesystem argv",
     )
-    source = _replace_once_if_present(
-        source,
-        '''                if self.botMatch {
-                    argv.append("+map")
-                } else {
-                    argv.append("+spmap")
-                }
-''',
-        '''                argv.append("+map")
-''',
-        "map command selection",
-    )
-    source = _replace_once_if_present(
-        source,
-        '''
-                if !self.botMatch {
-                    argv.append("+g_spSkill")
-                    argv.append(String(self.selectedDifficulty))
-                }
-''',
-        '''
-''',
-        "single-player skill arguments",
-    )
+    source = _patch_swift_direct_map_launch(source)
     source = _replace_once_if_present(
         source,
         '        Sys_SetHomeDir(documentsDir)\n',
@@ -198,12 +259,7 @@ def patch_sys_main(source: str) -> str:
         'Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterInstallPath");\n#endif',
         "install path breadcrumb",
     )
-    source = _replace_once_if_present(
-        source,
-        'CON_Init( );\n\tCom_Init( commandLine );\n\tNET_Init( );',
-        'CON_Init( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterConsoleInit");\n\tHijackedEngineTrace("Sys_Startup:beforeComInit");\n#endif\n\tCom_Init( commandLine );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterComInit");\n#endif\n\tNET_Init( );\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:afterNetInit");\n#endif',
-        "engine init breadcrumbs",
-    )
+    source = _insert_trace_around_engine_calls(source)
     source = _replace_once_if_present(
         source,
         'while( 1 )',
