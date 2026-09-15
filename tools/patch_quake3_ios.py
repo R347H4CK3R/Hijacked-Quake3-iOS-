@@ -33,12 +33,6 @@ def patch_game_view_controller(source: str) -> str:
     )
     source = _replace_once(
         source,
-        "var botMatch = false",
-        "var botMatch = true",
-        "botMatch",
-    )
-    source = _replace_once(
-        source,
         'self.defaults.string(forKey: "playerName")',
         'self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"',
         "playerName argv",
@@ -46,8 +40,27 @@ def patch_game_view_controller(source: str) -> str:
     source = _replace_once(
         source,
         'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"]',
-        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_homepath", documentsDir]',
+        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_apppath", Bundle.main.resourcePath!, "+set", "fs_homepath", documentsDir, "+set", "logfile", "2"]',
         "bundled baseq3 filesystem argv",
+    )
+    source = _replace_once_if_present(
+        source,
+        '''                if self.botMatch {
+                    argv.append("+map")
+                } else {
+                    argv.append("+spmap")
+                }
+                argv.append(self.selectedMap)
+
+                if !self.botMatch {
+                    argv.append("+g_spSkill")
+                    argv.append(String(self.selectedDifficulty))
+                }
+''',
+        '''                argv.append("+map")
+                argv.append(self.selectedMap)
+''',
+        "direct map launch",
     )
     source = _replace_once_if_present(
         source,
@@ -176,8 +189,14 @@ def patch_sys_main(source: str) -> str:
     source = _replace_once_if_present(
         source,
         'while( 1 )',
-        '#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:firstFrame");\n#endif\n\twhile( 1 )',
-        "first frame breadcrumb",
+        '#ifdef IOS\n\tqboolean hijackedFirstFrame = qtrue;\n#endif\n\twhile( 1 )',
+        "first frame state",
+    )
+    source = _replace_once_if_present(
+        source,
+        'Com_Frame( );',
+        '#ifdef IOS\n\t\tif (hijackedFirstFrame)\n\t\t\tHijackedEngineTrace("Sys_Startup:firstFrame:before");\n#endif\n\t\tCom_Frame( );\n#ifdef IOS\n\t\tif (hijackedFirstFrame) {\n\t\t\tHijackedEngineTrace("Sys_Startup:firstFrame:after");\n\t\t\thijackedFirstFrame = qfalse;\n\t\t}\n#endif',
+        "first frame breadcrumbs",
     )
     return source
 
@@ -206,7 +225,10 @@ def patch_runtime(root: Path) -> None:
         'hijackedTrace("GameViewController.viewDidLoad")',
         'hijackedTrace("before Sys_Startup")',
         '"+set", "fs_basepath", Bundle.main.resourcePath!',
+        '"+set", "fs_apppath", Bundle.main.resourcePath!',
         '"+set", "fs_homepath", documentsDir',
+        '"+set", "logfile", "2"',
+        'argv.append("+map")',
     )
     required_delegate = (
         'static void HijackedTrace',
@@ -218,7 +240,8 @@ def patch_runtime(root: Path) -> None:
         'HijackedEngineTrace("Sys_Startup:entered")',
         'HijackedEngineTrace("Sys_Startup:beforeComInit")',
         'HijackedEngineTrace("Sys_Startup:afterComInit")',
-        'HijackedEngineTrace("Sys_Startup:firstFrame")',
+        'HijackedEngineTrace("Sys_Startup:firstFrame:before")',
+        'HijackedEngineTrace("Sys_Startup:firstFrame:after")',
     )
     for marker in required_game:
         if marker not in game:
@@ -229,6 +252,10 @@ def patch_runtime(root: Path) -> None:
     for marker in required_engine:
         if marker not in engine:
             raise ValueError(f"real sys_main.c missing required breadcrumb marker: {marker}")
+    if 'var botMatch = true' in game:
+        raise ValueError("Hijacked direct launch must not force botMatch when bot_enable is disabled")
+    if 'argv.append("+spmap")' in game:
+        raise ValueError("Hijacked direct launch must not depend on single-player arena metadata")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -236,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("runtime_root", type=Path)
     args = parser.parse_args(argv)
     patch_runtime(args.runtime_root)
-    print("patched Quake3-iOS for deterministic Hijacked startup with bundled baseq3 paths and native breadcrumbs")
+    print("patched Quake3-iOS for deterministic Hijacked startup with explicit LiveContainer-safe paths and first-frame diagnostics")
     return 0
 
 
