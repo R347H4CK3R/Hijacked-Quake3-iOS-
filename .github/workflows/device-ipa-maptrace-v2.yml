@@ -1,12 +1,14 @@
 name: Hijacked Device IPA Full Diagnostics
 
-# verified compile trigger 2026-09-15
+# verified compile trigger 2026-09-15-r2
 on:
   push:
     branches:
       - dev/hijacked-port
     paths:
       - '.github/workflows/device-ipa-maptrace-v2.yml'
+      - 'tools/patch_full_diagnostics_ios.py'
+      - 'tests/test_full_diagnostics.py'
   workflow_dispatch:
 
 jobs:
