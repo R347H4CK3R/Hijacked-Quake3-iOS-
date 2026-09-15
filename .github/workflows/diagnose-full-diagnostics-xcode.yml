@@ -1,6 +1,6 @@
 name: Diagnose Full Diagnostics Xcode
 
-# compile probe revision 2
+# compile probe revision 3
 on:
   push:
     branches: [dev/hijacked-port]
@@ -23,6 +23,9 @@ jobs:
           PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_full_diagnostics_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          cp "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c" "$RUNNER_TEMP/patched-files.c"
+          echo '=== PATCHED FILES.C 1480-1545 ==='
+          nl -ba "$RUNNER_TEMP/patched-files.c" | sed -n '1480,1545p'
 
       - name: Add cgame render tracing
         run: |
@@ -71,10 +74,12 @@ jobs:
             exit "$STATUS"
           fi
 
-      - name: Upload Xcode log
+      - name: Upload Xcode diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: full-diagnostics-xcode-log
-          path: ${{ runner.temp }}/xcodebuild.log
+          path: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/patched-files.c
           if-no-files-found: error
