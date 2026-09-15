@@ -40,7 +40,7 @@ def patch_game_view_controller(source: str) -> str:
     source = _replace_once(
         source,
         'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer"]',
-        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_apppath", Bundle.main.resourcePath!, "+set", "fs_homepath", documentsDir, "+set", "logfile", "2"]',
+        'var argv: [String?] = [ Bundle.main.resourcePath! + "/quake3", "+set", "com_basegame", "baseq3", "+name", self.defaults.string(forKey: "playerName") ?? "HijackedPlayer", "+set", "fs_basepath", Bundle.main.resourcePath!, "+set", "fs_apppath", Bundle.main.resourcePath!, "+set", "logfile", "2", "+set", "fs_homepath", documentsDir]',
         "bundled baseq3 filesystem argv",
     )
     source = _replace_once_if_present(
