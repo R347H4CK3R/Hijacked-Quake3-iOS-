@@ -24,10 +24,35 @@ replacements.append((
     'CG_Printf( "HIJACKED_CGAME|RequestedModel:unavailable|%s/%s\\n", ci->modelName, ci->skinName );'
 ))
 
-# Player icons are UI-only; do not fail model registration solely because the icon is absent.
+# Player icons are UI-only. The device trace currently stops in the Sarge
+# icon lookup/registration path, so do not enter renderer shader registration
+# for model icons at all. Gameplay models, skins and animations still register.
+icon_block = '''\tif ( CG_FindClientHeadFile( filename, sizeof(filename), ci, teamName, headName, headSkinName, "icon", "skin" ) ) {
+\t\tci->modelIcon = trap_R_RegisterShaderNoMip( filename );
+\t}
+\telse if ( CG_FindClientHeadFile( filename, sizeof(filename), ci, teamName, headName, headSkinName, "icon", "tga" ) ) {
+\t\tci->modelIcon = trap_R_RegisterShaderNoMip( filename );
+\t}
+'''
+icon_skip = '''\tci->modelIcon = 0;
+\tCG_Printf( "HIJACKED_CGAME|ModelIcon:skip|model=%s|skin=%s\\n", modelName, skinName );
+'''
+if source.count(icon_block) != 1:
+    raise SystemExit(f"expected one player icon registration block, found {source.count(icon_block)}")
+source = source.replace(icon_block, icon_skip, 1)
+
+# Missing icons must never fail client registration.
 replacements.append((
-    '''\tif ( !ci->modelIcon ) {\n\t\treturn qfalse;\n\t}\n\n\treturn qtrue;''',
-    '''\tif ( !ci->modelIcon ) {\n\t\tCG_Printf( "HIJACKED_CGAME|ModelIcon:missing|model=%s|skin=%s\\n", modelName, skinName );\n\t}\n\n\treturn qtrue;'''
+    '''\tif ( !ci->modelIcon ) {
+\t\treturn qfalse;
+\t}
+
+\treturn qtrue;''',
+    '''\tif ( !ci->modelIcon ) {
+\t\tCG_Printf( "HIJACKED_CGAME|ModelIcon:missing|model=%s|skin=%s\\n", modelName, skinName );
+\t}
+
+\treturn qtrue;'''
 ))
 
 for old, new in replacements:
@@ -35,7 +60,7 @@ for old, new in replacements:
         raise SystemExit(f"expected one patch point, found {source.count(old)} for: {old[:80]!r}")
     source = source.replace(old, new, 1)
 
-# Optional player voice registration is the last observed device stall. Skip it entirely.
+# Optional player voice registration is not required for map bring-up.
 old_sounds = '''\t// sounds
 \tdir = ci->modelName;
 \tfallback = (cgs.gametype >= GT_TEAM) ? DEFAULT_TEAM_MODEL : DEFAULT_MODEL;
