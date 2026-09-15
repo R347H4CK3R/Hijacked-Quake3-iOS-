@@ -124,6 +124,7 @@ jobs:
             -derivedDataPath "$DERIVED" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) STANDALONE' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
