@@ -86,6 +86,23 @@ jobs:
           grep -F 'FS_FOpenFileRead:filename' "$RUNNER_TEMP/Quake3-iOS/Quake3/qcommon/files.c"
           grep -F 'HijackedMapLaunch:afterExecute' "$RUNNER_TEMP/Quake3-iOS/Quake3/sys/sys_main.c"
 
+      - name: Reject host-only absolute texture paths
+        run: |
+          export IMAGE_C="$RUNNER_TEMP/Quake3-iOS/Quake3/renderergl1/tr_image.c"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['IMAGE_C'])
+          s = p.read_text()
+          old = '''\tif (!name) {\n\t\treturn NULL;\n\t}\n\n\thash = generateHashValue(name);'''
+          new = '''\tif (!name) {\n\t\treturn NULL;\n\t}\n\n\t/* Imported OpenArena models may retain D:\\ / E:\\ build-machine paths.\n\t * They are never valid Quake VFS assets on iOS, so reject them before\n\t * R_LoadImage probes every extension and floods the launch trace. */\n\tif (name[0] && name[1] == ':') {\n\t\tri.Printf( PRINT_DEVELOPER, "HIJACKED_MEDIA|SkipExternalImagePath|%s\\n", name );\n\t\treturn NULL;\n\t}\n\n\thash = generateHashValue(name);'''
+          if s.count(old) != 1:
+              raise SystemExit(f'expected one R_FindImageFile guard, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          grep -F 'HIJACKED_MEDIA|SkipExternalImagePath' "$IMAGE_C"
+          grep -F "name[0] && name[1] == ':'" "$IMAGE_C"
+
       - name: Stage baseq3 placeholder
         run: |
           BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
