@@ -89,6 +89,35 @@ jobs:
           grep -F 'HijackedMapLaunch:beforeQueue' "$SYS_MAIN"
           grep -F 'HijackedMapLaunch:afterExecute' "$SYS_MAIN"
 
+      - name: Trace Hijacked world load and scene submission
+        run: |
+          export CL_CGAME="$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['CL_CGAME'])
+          source = path.read_text()
+
+          old_load = '''\tcase CG_R_LOADWORLDMAP:\n\t\tre.LoadWorld( VMA(1) );\n\t\treturn 0; '''
+          new_load = '''\tcase CG_R_LOADWORLDMAP:\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:before|%s\\n", (const char *)VMA(1) );\n\t\tre.LoadWorld( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:after|%s\\n", (const char *)VMA(1) );\n\t\treturn 0; '''
+          if source.count(old_load) != 1:
+              raise SystemExit(f'expected one CG_R_LOADWORLDMAP case, found {source.count(old_load)}')
+          source = source.replace(old_load, new_load, 1)
+
+          old_render = '''\tcase CG_R_RENDERSCENE:\n\t\tre.RenderScene( VMA(1) );\n\t\treturn 0;'''
+          new_render = '''\tcase CG_R_RENDERSCENE:\n\t\t{\n\t\t\tstatic int hijackedRenderSceneCount = 0;\n\t\t\tif ( hijackedRenderSceneCount < 12 ) {\n\t\t\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:before|%d\\n", hijackedRenderSceneCount );\n\t\t\t}\n\t\t\tre.RenderScene( VMA(1) );\n\t\t\tif ( hijackedRenderSceneCount < 12 ) {\n\t\t\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:after|%d\\n", hijackedRenderSceneCount );\n\t\t\t}\n\t\t\thijackedRenderSceneCount++;\n\t\t}\n\t\treturn 0;'''
+          if source.count(old_render) != 1:
+              raise SystemExit(f'expected one CG_R_RENDERSCENE case, found {source.count(old_render)}')
+          source = source.replace(old_render, new_render, 1)
+
+          path.write_text(source)
+          PY
+          grep -F 'HIJACKED_RENDER|LoadWorld:before' "$CL_CGAME"
+          grep -F 'HIJACKED_RENDER|LoadWorld:after' "$CL_CGAME"
+          grep -F 'HIJACKED_RENDER|RenderScene:before' "$CL_CGAME"
+          grep -F 'HIJACKED_RENDER|RenderScene:after' "$CL_CGAME"
+
       - name: Stage baseq3 placeholder
         run: |
           BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
