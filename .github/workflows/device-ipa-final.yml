@@ -9,26 +9,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  final-device:
-    runs-on: macos-15
+  qvms:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Run patch regression tests
         run: |
-          python -m pip install --disable-pip-version-check pytest
-          PYTHONPATH=. python -m pytest -q tests/test_patch_quake3_ios.py
+          python3 -m pip install --disable-pip-version-check pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
 
       - name: Build open baseq3 QVMs
         run: |
           git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
           cd "$RUNNER_TEMP/ioq3"
           git checkout 588393618dbc82e7207c21c6ddecca229944a03a
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           p = Path('code/cgame/cg_players.c')
           s = p.read_text()
@@ -54,6 +50,27 @@ jobs:
             test -s "$SRC"
             cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
           done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-qvms
+          path: ${{ runner.temp }}/qvms
+          if-no-files-found: error
+
+  final-device:
+    needs: qvms
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: final-qvms
+          path: ${{ runner.temp }}/qvms
 
       - name: Fetch pinned Quake3-iOS runtime
         run: |
