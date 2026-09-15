@@ -118,39 +118,26 @@ jobs:
           python3 - <<'PY'
           import base64, hashlib, os, struct, zlib
           from pathlib import Path
-
           encoded = ''.join(Path('runtime/hijacked-device.bsp.zlib.b64').read_text().split())
           data = zlib.decompress(base64.b64decode(encoded))
-          if data[:4] != b'IBSP':
-              raise SystemExit(f'bad BSP magic: {data[:4]!r}')
+          if data[:4] != b'IBSP': raise SystemExit(f'bad BSP magic: {data[:4]!r}')
           version = struct.unpack_from('<i', data, 4)[0]
-          if version != 46:
-              raise SystemExit(f'bad BSP version: {version}')
+          if version != 46: raise SystemExit(f'bad BSP version: {version}')
           for index in range(17):
               off, length = struct.unpack_from('<ii', data, 8 + index * 8)
               if off < 0 or length < 0 or off + length > len(data):
                   raise SystemExit(f'invalid BSP lump {index}: {off}+{length}>{len(data)}')
-          bsp = Path(os.environ['BSP_OUT'])
-          bsp.write_bytes(data)
-
+          bsp = Path(os.environ['BSP_OUT']); bsp.write_bytes(data)
           width = height = 64
-          header = bytearray(18)
-          header[2] = 2
-          header[12:14] = struct.pack('<H', width)
-          header[14:16] = struct.pack('<H', height)
-          header[16] = 24
-          header[17] = 0x20
+          header = bytearray(18); header[2] = 2
+          header[12:14] = struct.pack('<H', width); header[14:16] = struct.pack('<H', height)
+          header[16] = 24; header[17] = 0x20
           pixels = bytearray()
           for y in range(height):
               for x in range(width):
-                  if ((x // 8) + (y // 8)) & 1:
-                      r, g, b = 230, 230, 230
-                  else:
-                      r, g, b = 40, 170, 220
-                  pixels += bytes((b, g, r))
-          tex = Path(os.environ['TEX_OUT'])
-          tex.write_bytes(header + pixels)
-
+                  r,g,b = (230,230,230) if ((x//8)+(y//8)) & 1 else (40,170,220)
+                  pixels += bytes((b,g,r))
+          tex = Path(os.environ['TEX_OUT']); tex.write_bytes(header + pixels)
           print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
           print(f'Texture bytes={tex.stat().st_size} sha256={hashlib.sha256(tex.read_bytes()).hexdigest()}')
           PY
@@ -176,3 +163,5 @@ jobs:
           name: Hijacked-Quake3-iOS-final-unsigned-IPA
           path: Hijacked-Quake3-iOS-final-unsigned.ipa
           if-no-files-found: error
+
+# force final-device run
