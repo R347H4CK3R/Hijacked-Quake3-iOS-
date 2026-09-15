@@ -24,6 +24,16 @@ def _replace_once_if_present(source: str, old: str, new: str, label: str) -> str
     return source.replace(old, new, 1)
 
 
+def _insert_after_first_variant(source: str, variants: tuple[str, ...], suffix: str, label: str) -> str:
+    if suffix in source:
+        return source
+    matches = [variant for variant in variants if source.count(variant) == 1]
+    if len(matches) != 1:
+        raise ValueError(f"expected exactly one {label} variant, found {len(matches)}")
+    marker = matches[0]
+    return source.replace(marker, marker + suffix, 1)
+
+
 def patch_game_view_controller(source: str) -> str:
     source = _replace_once(
         source,
@@ -50,17 +60,22 @@ def patch_game_view_controller(source: str) -> str:
                 } else {
                     argv.append("+spmap")
                 }
-                argv.append(self.selectedMap)
-
+''',
+        '''                argv.append("+map")
+''',
+        "map command selection",
+    )
+    source = _replace_once_if_present(
+        source,
+        '''
                 if !self.botMatch {
                     argv.append("+g_spSkill")
                     argv.append(String(self.selectedDifficulty))
                 }
 ''',
-        '''                argv.append("+map")
-                argv.append(self.selectedMap)
+        '''
 ''',
-        "direct map launch",
+        "single-player skill arguments",
     )
     source = _replace_once_if_present(
         source,
@@ -138,11 +153,14 @@ def patch_sys_main(source: str) -> str:
     header = '''#ifdef IOS\nvoid Sys_Startup( int argc, char **argv )\n#else\nint main( int argc, char **argv )\n#endif // IOS'''
     helper = '''#ifdef IOS\nstatic void HijackedEngineTrace(const char *message)\n{\n    const char *home = Sys_DefaultHomePath();\n    char path[MAX_OSPATH];\n    FILE *f;\n\n    if (!home || !*home || !message)\n        return;\n\n    snprintf(path, sizeof(path), "%sHijackedLaunchTrace.txt", home);\n    f = fopen(path, "a");\n    if (!f)\n        return;\n\n    fprintf(f, "%s\\n", message);\n    fclose(f);\n}\n#endif\n\n''' + header
     source = _replace_once(source, header, helper, "Sys_Startup trace helper")
-    source = _replace_once_if_present(
+    source = _insert_after_first_variant(
         source,
-        'char  commandLine[ MAX_STRING_CHARS ] = { 0 };',
-        'char  commandLine[ MAX_STRING_CHARS ] = { 0 };\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:entered");\n#endif',
-        "Sys_Startup entered breadcrumb",
+        (
+            'char  commandLine[ MAX_STRING_CHARS ] = { 0 };',
+            'char commandLine[ MAX_STRING_CHARS ] = { 0 };',
+        ),
+        '\n#ifdef IOS\n\tHijackedEngineTrace("Sys_Startup:entered");\n#endif',
+        "commandLine declaration",
     )
     source = _replace_once_if_present(
         source,
