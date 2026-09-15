@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import argparse
+import re
 
 
 def _replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -81,37 +82,35 @@ def patch_common(source: str) -> str:
 
 def patch_filesystem(source: str) -> str:
     signature = "long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE)"
-    start = source.index(signature)
-    next_fn = source.index("\n/*\n=================\nFS_FindVM", start)
-    block = source[start:next_fn]
-    entry = signature + "\n{"
-    block = _replace_once(
-        block,
-        entry,
-        entry + '\n\tCom_Printf("HIJACKED_RESOLVE|request|file=%s|unique=%d\\n", filename ? filename : "<null>", uniqueFILE);',
-        "FS_FOpenFileRead entry",
-    )
+    start, end = _function_span(source, signature)
+    block = source[start:end]
+    entry_match = re.search(r"long FS_FOpenFileRead\(const char \*filename, fileHandle_t \*file, qboolean uniqueFILE\)\s*\{", block)
+    if not entry_match:
+        raise ValueError("FS_FOpenFileRead entry marker not found")
+    entry_text = entry_match.group(0)
     block = block.replace(
-        "\t\t\t\treturn len;",
-        '\t\t\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\\n", filename, len, file ? *file : 0, errno); return len; }',
+        entry_text,
+        entry_text + '\n\tCom_Printf("HIJACKED_RESOLVE|request|file=%s|unique=%d\\n", filename ? filename : "<null>", uniqueFILE);',
+        1,
     )
-    block = block.replace(
-        "\t\t\t\treturn len;",
-        '\t\t\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\\n", filename, len, file ? *file : 0, errno); return len; }',
-    )
-    block = _replace_once(
-        block,
-        "\t\treturn -1;",
-        '\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=-1|handle=0|errno=%d\\n", filename, errno); return -1; }',
-        "FS_FOpenFileRead missing return",
-    )
-    block = _replace_once(
-        block,
-        "\t\treturn 0;",
-        '\t\t{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=0|handle=0|errno=%d\\n", filename, errno); return 0; }',
-        "FS_FOpenFileRead existence return",
-    )
-    return source[:start] + block + source[next_fn:]
+
+    def instrument_return(match: re.Match[str]) -> str:
+        indent, value = match.group(1), match.group(2)
+        if value == "len":
+            length_expr = "len"
+            handle_expr = "file ? *file : 0"
+        else:
+            length_expr = value
+            handle_expr = "file ? *file : 0"
+        return (
+            f'{indent}{{ Com_Printf("HIJACKED_RESOLVE|result|file=%s|len=%ld|handle=%d|errno=%d\\n", '
+            f'filename ? filename : "<null>", (long)({length_expr}), {handle_expr}, errno); return {value}; }}'
+        )
+
+    block, count = re.subn(r"(?m)^(\s*)return\s+(len|-1|0);\s*$", instrument_return, block)
+    if count == 0:
+        raise ValueError("FS_FOpenFileRead contained no supported result returns")
+    return source[:start] + block + source[end:]
 
 
 def patch_server(source: str) -> str:
