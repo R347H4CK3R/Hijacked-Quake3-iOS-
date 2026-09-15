@@ -76,7 +76,7 @@ jobs:
           PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
 
-      - name: Trace world load and render submission
+      - name: Trace media registration, world load and render submission
         run: |
           export CL_CGAME="$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
           python3 - <<'PY'
@@ -84,16 +84,40 @@ jobs:
           from pathlib import Path
           p = Path(os.environ['CL_CGAME'])
           s = p.read_text()
-          a = '\tcase CG_R_LOADWORLDMAP:\n\t\tre.LoadWorld( VMA(1) );\n\t\treturn 0; '
-          b = '\tcase CG_R_LOADWORLDMAP:\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:before|%s\\n", (const char *)VMA(1) );\n\t\tre.LoadWorld( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:after|%s\\n", (const char *)VMA(1) );\n\t\treturn 0; '
-          if s.count(a) != 1:
-              raise SystemExit('CG_R_LOADWORLDMAP patch point mismatch')
-          s = s.replace(a, b, 1)
-          a = '\tcase CG_R_RENDERSCENE:\n\t\tre.RenderScene( VMA(1) );\n\t\treturn 0;'
-          b = '\tcase CG_R_RENDERSCENE:\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:before\\n" );\n\t\tre.RenderScene( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:after\\n" );\n\t\treturn 0;'
-          if s.count(a) != 1:
-              raise SystemExit('CG_R_RENDERSCENE patch point mismatch')
-          p.write_text(s.replace(a, b, 1))
+
+          patches = [
+              (
+                  '\tcase CG_R_LOADWORLDMAP:\n\t\tre.LoadWorld( VMA(1) );\n\t\treturn 0; ',
+                  '\tcase CG_R_LOADWORLDMAP:\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:before|%s\\n", (const char *)VMA(1) );\n\t\tre.LoadWorld( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:after|%s\\n", (const char *)VMA(1) );\n\t\treturn 0; '
+              ),
+              (
+                  '\tcase CG_R_REGISTERMODEL:\n\t\treturn re.RegisterModel( VMA(1) );',
+                  '\tcase CG_R_REGISTERMODEL: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterModel:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterModel( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterModel:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSKIN:\n\t\treturn re.RegisterSkin( VMA(1) );',
+                  '\tcase CG_R_REGISTERSKIN: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterSkin:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterSkin( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterSkin:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSHADER:\n\t\treturn re.RegisterShader( VMA(1) );',
+                  '\tcase CG_R_REGISTERSHADER: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShader:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterShader( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShader:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSHADERNOMIP:\n\t\treturn re.RegisterShaderNoMip( VMA(1) );',
+                  '\tcase CG_R_REGISTERSHADERNOMIP: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShaderNoMip:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterShaderNoMip( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShaderNoMip:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_RENDERSCENE:\n\t\tre.RenderScene( VMA(1) );\n\t\treturn 0;',
+                  '\tcase CG_R_RENDERSCENE:\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:before\\n" );\n\t\tre.RenderScene( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:after\\n" );\n\t\treturn 0;'
+              ),
+          ]
+
+          for old, new in patches:
+              if s.count(old) != 1:
+                  raise SystemExit(f'cgame trace patch point mismatch: {old.splitlines()[0]}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
           PY
 
       - name: Stage baseq3 placeholder
