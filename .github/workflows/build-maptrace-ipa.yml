@@ -157,10 +157,10 @@ jobs:
           git clone --filter=blob:none --no-checkout https://github.com/Usnul/queep-3-arena.git "$OA_REPO"
           cd "$OA_REPO"
           git sparse-checkout init --cone
-          git sparse-checkout set assets/extracted/models assets/extracted/sound assets/extracted/textures assets/extracted/gfx assets/extracted/sprites assets/extracted/scripts assets/extracted/icons
+          git sparse-checkout set assets/extracted/models assets/extracted/sound assets/extracted/textures assets/extracted/gfx assets/extracted/sprites assets/extracted/scripts assets/extracted/icons assets/extracted/menu
           git checkout "$OA_COMMIT"
           mkdir -p "$OA_FILTERED"
-          for DIR in models sound textures gfx sprites scripts icons; do
+          for DIR in models sound textures gfx sprites scripts icons menu; do
             if [ -d "$OA_REPO/assets/extracted/$DIR" ]; then
               cp -R "$OA_REPO/assets/extracted/$DIR" "$OA_FILTERED/"
             fi
@@ -168,6 +168,7 @@ jobs:
           test -s "$OA_FILTERED/models/players/sarge/lower.md3"
           test -s "$OA_FILTERED/models/weapons2/machinegun/machinegun.md3"
           test -s "$OA_FILTERED/sound/misc/menu1.wav"
+          test -s "$OA_FILTERED/menu/art/sliderbutt_1.tga"
           cd "$OA_FILTERED"
           /usr/bin/zip -qry "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" .
           curl -L --fail --retry 3 https://raw.githubusercontent.com/drdator/q3edit/main/public/openarena/COPYING -o "$RUNNER_TEMP/OpenArena-COPYING.txt"
@@ -218,6 +219,7 @@ jobs:
           test -s "$APP/baseq3/models/players/sarge/lower.md3"
           test -s "$APP/baseq3/models/weapons2/machinegun/machinegun.md3"
           test -s "$APP/baseq3/sound/misc/menu1.wav"
+          test -s "$APP/baseq3/menu/art/sliderbutt_1.tga"
           test -d "$APP/baseq3/scripts"
           test -d "$APP/baseq3/textures"
 
@@ -236,6 +238,7 @@ jobs:
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/lower.md3'
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/weapons2/machinegun/machinegun.md3'
           unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/sound/misc/menu1.wav'
+          unzip -l Hijacked-Quake3-iOS-maptrace-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/menu/art/sliderbutt_1.tga'
 
       - uses: actions/upload-artifact@v4
         with:
