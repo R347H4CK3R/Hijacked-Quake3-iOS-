@@ -1,4 +1,4 @@
-name: Hijacked Device IPA Full Diagnostics
+name: Hijacked Device IPA Frame Visibility
 
 on:
   push:
@@ -11,17 +11,22 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Run patch regression tests
+        run: |
+          python3 -m pip install --disable-pip-version-check pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py tests/test_patch_frame_visibility_ios.py
       - name: Build open baseq3 QVMs
         run: |
           git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
           cd "$RUNNER_TEMP/ioq3"
           git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          python3 "$GITHUB_WORKSPACE/tools/patch_ioq3_cgame_ios.py" "$RUNNER_TEMP/ioq3"
           cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=OFF -DBUILD_SERVER=OFF -DBUILD_RENDERER_GL1=OFF -DBUILD_RENDERER_GL2=OFF -DBUILD_GAME_LIBRARIES=OFF -DBUILD_GAME_QVMS=ON -DBUILD_STANDALONE=ON
           cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
           mkdir -p "$RUNNER_TEMP/qvms/vm"
           for NAME in qagame cgame ui; do cp "$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"; done
       - uses: actions/upload-artifact@v4
-        with: {name: full-diagnostics-qvms, path: '${{ runner.temp }}/qvms'}
+        with: {name: frame-visibility-qvms, path: '${{ runner.temp }}/qvms'}
 
   device:
     needs: qvms
@@ -29,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: {name: full-diagnostics-qvms, path: '${{ runner.temp }}/qvms'}
+        with: {name: frame-visibility-qvms, path: '${{ runner.temp }}/qvms'}
       - name: Fetch and patch Quake3-iOS
         run: |
           git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
@@ -37,7 +42,9 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_client_stabilization_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_full_diagnostics_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_frame_visibility_ios.py "$RUNNER_TEMP/Quake3-iOS"
       - name: Build unsigned arm64 app
         run: |
           mkdir -p "$HOME/Library/Application Support/quake3/baseq3"
@@ -58,27 +65,59 @@ jobs:
           test -s "$RUNNER_TEMP/oa-pack/models/weapons2/machinegun/machinegun.md3"
           test -s "$RUNNER_TEMP/oa-pack/sound/misc/menu1.wav"
           cd "$RUNNER_TEMP/oa-pack" && /usr/bin/zip -qry "$RUNNER_TEMP/openarena-runtime.pk3" .
-      - name: Inject complete runtime and Hijacked map
+      - name: Inject complete runtime and visible Hijacked map
         run: |
           set -euo pipefail
-          APP="$(cat "$RUNNER_TEMP/app.txt")"; mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps" "$APP/baseq3/textures/hijacked"
+          APP="$(cat "$RUNNER_TEMP/app.txt")"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps" "$APP/baseq3/textures/hijacked" "$APP/baseq3/scripts"
           cp "$RUNNER_TEMP/openarena-runtime.pk3" "$APP/baseq3/openarena-runtime.pk3"
           cp "$RUNNER_TEMP/qvms/vm/"*.qvm "$APP/baseq3/vm/"
-          printf '%s\n' 'seta com_introplayed "1"' 'seta sv_pure "0"' 'seta vm_game "1"' 'seta vm_cgame "1"' 'seta vm_ui "1"' 'seta bot_enable "0"' 'seta com_maxfps "60"' 'seta r_fullscreen "1"' > "$APP/baseq3/default.cfg"
+          printf '%s\n' \
+            'seta com_introplayed "1"' \
+            'seta sv_pure "0"' \
+            'seta vm_game "1"' \
+            'seta vm_cgame "1"' \
+            'seta vm_ui "1"' \
+            'seta bot_enable "0"' \
+            'seta com_maxfps "60"' \
+            'seta r_fullscreen "1"' \
+            'seta r_ignoreGLErrors "1"' \
+            > "$APP/baseq3/default.cfg"
           cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          cat > "$APP/baseq3/scripts/hijacked.shader" <<'SHADER'
+          textures/hijacked/visual
+          {
+              cull disable
+              surfaceparm nolightmap
+              {
+                  map $whiteimage
+                  rgbGen const ( 0.55 0.62 0.68 )
+              }
+          }
+          SHADER
+          printf '%s\n' 'hijacked' > "$APP/baseq3/scripts/shaderlist.txt"
           BSP_OUT="$APP/baseq3/maps/hijacked.bsp" VISUAL_OUT="$APP/baseq3/textures/hijacked/visual.tga" python3 - <<'PY'
-          import base64,os,struct,zlib
+          import base64,os,struct,zlib,hashlib
           from pathlib import Path
           data=zlib.decompress(base64.b64decode(''.join(Path('runtime/hijacked-device.bsp.zlib.b64').read_text().split())))
           assert data[:4]==b'IBSP' and struct.unpack_from('<i',data,4)[0]==46
+          for i in range(17):
+              off,length=struct.unpack_from('<ii',data,8+i*8)
+              assert off>=0 and length>=0 and off+length<=len(data), (i,off,length,len(data))
           Path(os.environ['BSP_OUT']).write_bytes(data)
-          w=h=64; hdr=bytearray(18); hdr[2]=2; hdr[12:14]=struct.pack('<H',w); hdr[14:16]=struct.pack('<H',h); hdr[16]=24; hdr[17]=0x20
+          w=h=256; hdr=bytearray(18); hdr[2]=2; hdr[12:14]=struct.pack('<H',w); hdr[14:16]=struct.pack('<H',h); hdr[16]=24; hdr[17]=0x20
           px=bytearray()
           for y in range(h):
             for x in range(w):
-              r,g,b=(230,230,230) if ((x//8)+(y//8))&1 else (40,170,220); px+=bytes((b,g,r))
-          Path(os.environ['VISUAL_OUT']).write_bytes(hdr+px)
+              r,g,b=(245,245,245) if ((x//32)+(y//32))&1 else (30,180,230); px+=bytes((b,g,r))
+          tex=Path(os.environ['VISUAL_OUT']); tex.write_bytes(hdr+px)
+          print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+          print(f'Visual bytes={tex.stat().st_size} sha256={hashlib.sha256(tex.read_bytes()).hexdigest()}')
           PY
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/textures/hijacked/visual.tga"
+          grep -F 'cull disable' "$APP/baseq3/scripts/hijacked.shader"
+          grep -F 'map $whiteimage' "$APP/baseq3/scripts/hijacked.shader"
       - name: Validate required runtime dependencies and package IPA
         run: |
           set -euo pipefail
@@ -86,8 +125,12 @@ jobs:
           unzip -l "$APP/baseq3/openarena-runtime.pk3" | grep -F 'sound/misc/menu1.wav'
           unzip -l "$APP/baseq3/openarena-runtime.pk3" | grep -F 'models/players/sarge/lower.md3'
           unzip -l "$APP/baseq3/openarena-runtime.pk3" | grep -F 'models/weapons2/machinegun/machinegun.md3'
+          test -s "$APP/baseq3/scripts/hijacked.shader"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"; cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"; cd "$RUNNER_TEMP/ipa"
-          zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa" Payload
-          unzip -t "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa" >/dev/null
+          zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa" >/dev/null
+          unzip -l "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa" | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa" | grep -F 'Payload/Quake3-iOS.app/baseq3/scripts/hijacked.shader'
+          unzip -l "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa" | grep -F 'Payload/Quake3-iOS.app/baseq3/textures/hijacked/visual.tga'
       - uses: actions/upload-artifact@v4
-        with: {name: Hijacked-Quake3-iOS-full-diagnostics-unsigned-IPA, path: Hijacked-Quake3-iOS-full-diagnostics-unsigned.ipa, if-no-files-found: error}
+        with: {name: Hijacked-Quake3-iOS-frame-visibility-unsigned-IPA, path: Hijacked-Quake3-iOS-frame-visibility-unsigned.ipa, if-no-files-found: error}
