@@ -18,7 +18,7 @@ jobs:
       - name: Run patch regression tests
         run: |
           python3 -m pip install --disable-pip-version-check pytest
-          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
+          PYTHONPATH=. python3 -m pytest -q
 
       - name: Build patched baseq3 QVMs
         run: |
@@ -170,6 +170,7 @@ jobs:
               cp -R "$OA_REPO/assets/extracted/$DIR" "$OA_FILTERED/"
             fi
           done
+          PYTHONPATH="$GITHUB_WORKSPACE" python3 "$GITHUB_WORKSPACE/tools/sanitize_windows_asset_paths.py" "$OA_FILTERED"
           test -s "$OA_FILTERED/models/players/sarge/lower.md3"
           test -s "$OA_FILTERED/models/weapons2/machinegun/machinegun.md3"
           test -s "$OA_FILTERED/sound/misc/menu1.wav"
