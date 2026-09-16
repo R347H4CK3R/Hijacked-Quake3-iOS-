@@ -26,8 +26,10 @@ jobs:
           cd "$RUNNER_TEMP/ioq3"
           git checkout 588393618dbc82e7207c21c6ddecca229944a03a
           python3 "$GITHUB_WORKSPACE/tools/patch_ioq3_cgame_ios.py" "$RUNNER_TEMP/ioq3"
+          python3 "$GITHUB_WORKSPACE/tools/patch_ioq3_draw_trace.py" "$RUNNER_TEMP/ioq3"
           grep -F 'HIJACKED_CGAME|ClientSounds:skip' code/cgame/cg_players.c
           grep -F 'HIJACKED_CGAME|ClientSounds:complete' code/cgame/cg_players.c
+          grep -F 'HIJACKED_CGAME_DRAW|beforeActive' code/cgame/cg_view.c
           cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_CLIENT=OFF \
@@ -75,6 +77,9 @@ jobs:
         run: |
           PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
           PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_direct_map_render_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          grep -F 'uivm || cgvm || clc.state >= CA_LOADING' "$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_scrn.c"
+          grep -F 'HIJACKED_DRAW|Active:beforeCGame' "$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_scrn.c"
 
       - name: Trace media registration, world load and render submission
         run: |
