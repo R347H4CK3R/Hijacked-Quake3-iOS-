@@ -11,15 +11,46 @@ def _replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
+def _function_span(source: str, signature: str) -> tuple[int, int]:
+    start = source.index(signature)
+    brace = source.index("{", start)
+    depth = 0
+    in_string = False
+    in_char = False
+    escape = False
+    i = brace
+    while i < len(source):
+        ch = source[i]
+        if escape:
+            escape = False
+        elif ch == "\\" and (in_string or in_char):
+            escape = True
+        elif ch == '"' and not in_char:
+            in_string = not in_string
+        elif ch == "'" and not in_string:
+            in_char = not in_char
+        elif not in_string and not in_char:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return start, i + 1
+        i += 1
+    raise ValueError(f"unterminated function: {signature}")
+
+
 def patch_cl_main(source: str) -> str:
-    source = _replace_once(
-        source,
+    start, end = _function_span(source, "void CL_Frame ( int msec )")
+    block = source[start:end]
+    block = _replace_once(
+        block,
         "void CL_Frame ( int msec ) {",
         "void CL_Frame ( int msec ) {\n#ifdef IOS\n\tstatic int hijackedFrameTraceCount = 0;\n#endif",
         "CL_Frame entry",
     )
-    source = _replace_once(
-        source,
+    block = _replace_once(
+        block,
         "\tCL_SetCGameTime();",
         '''#ifdef IOS
 \tif (hijackedFrameTraceCount < 32)
@@ -30,10 +61,10 @@ def patch_cl_main(source: str) -> str:
 \tif (hijackedFrameTraceCount < 32)
 \t\tCom_Printf("HIJACKED_FRAME|SetCGameTime:after|state=%d|serverTime=%d\\n", clc.state, cl.serverTime);
 #endif''',
-        "CL_SetCGameTime",
+        "CL_SetCGameTime in CL_Frame",
     )
-    source = _replace_once(
-        source,
+    block = _replace_once(
+        block,
         "\tSCR_UpdateScreen();",
         '''#ifdef IOS
 \tif (hijackedFrameTraceCount < 32)
@@ -46,9 +77,9 @@ def patch_cl_main(source: str) -> str:
 \t\thijackedFrameTraceCount++;
 \t}
 #endif''',
-        "SCR_UpdateScreen",
+        "SCR_UpdateScreen in CL_Frame",
     )
-    return source
+    return source[:start] + block + source[end:]
 
 
 def patch_cl_cgame(source: str) -> str:
@@ -75,14 +106,16 @@ def patch_cl_cgame(source: str) -> str:
 
 
 def patch_cl_scrn(source: str) -> str:
-    source = _replace_once(
-        source,
+    start, end = _function_span(source, "void SCR_UpdateScreen( void )")
+    block = source[start:end]
+    block = _replace_once(
+        block,
         "void SCR_UpdateScreen( void ) {",
         "void SCR_UpdateScreen( void ) {\n#ifdef IOS\n\tstatic int hijackedSwapTraceCount = 0;\n#endif",
         "SCR_UpdateScreen entry",
     )
-    source = _replace_once(
-        source,
+    block = _replace_once(
+        block,
         "\t\tre.EndFrame( &time_frontend, &time_backend );",
         '''#ifdef IOS
 \t\tif (hijackedSwapTraceCount < 32)
@@ -97,8 +130,8 @@ def patch_cl_scrn(source: str) -> str:
 #endif''',
         "timed EndFrame",
     )
-    source = _replace_once(
-        source,
+    block = _replace_once(
+        block,
         "\t\tre.EndFrame( NULL, NULL );",
         '''#ifdef IOS
 \t\tif (hijackedSwapTraceCount < 32)
@@ -113,7 +146,7 @@ def patch_cl_scrn(source: str) -> str:
 #endif''',
         "untimed EndFrame",
     )
-    return source
+    return source[:start] + block + source[end:]
 
 
 def patch_runtime(root: Path) -> None:
