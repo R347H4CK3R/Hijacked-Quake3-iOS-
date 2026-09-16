@@ -55,6 +55,46 @@ replacements.append((
 \treturn qtrue;'''
 ))
 
+# The device trace shows an intermittent termination exactly as the cgame opens
+# models/players/sarge/animation.cfg. A prior pass in the same trace reads the
+# identical file successfully, so this is not missing content. For map bring-up,
+# avoid that filesystem boundary entirely and use a deterministic static pose.
+# The world, player MD3s and skins still register normally; only animated player
+# motion is temporarily reduced to a safe single-frame pose.
+old_animation = '''\t// load the animations
+\tCom_sprintf( filename, sizeof( filename ), "models/players/%s/animation.cfg", modelName );
+\tif ( !CG_ParseAnimationFile( filename, ci ) ) {
+\t\tCom_sprintf( filename, sizeof( filename ), "models/players/characters/%s/animation.cfg", modelName );
+\t\tif ( !CG_ParseAnimationFile( filename, ci ) ) {
+\t\t\tCom_Printf( "Failed to load animation file %s\\n", filename );
+\t\t\treturn qfalse;
+\t\t}
+\t}
+'''
+new_animation = '''\t// iOS map bring-up: avoid the unstable animation.cfg filesystem read.
+\t{
+\t\tint hijackedAnim;
+\t\tfor ( hijackedAnim = 0; hijackedAnim < MAX_ANIMATIONS; hijackedAnim++ ) {
+\t\t\tci->animations[hijackedAnim].firstFrame = 0;
+\t\t\tci->animations[hijackedAnim].numFrames = 1;
+\t\t\tci->animations[hijackedAnim].loopFrames = 1;
+\t\t\tci->animations[hijackedAnim].frameLerp = 100;
+\t\t\tci->animations[hijackedAnim].initialLerp = 100;
+\t\t\tci->animations[hijackedAnim].reversed = qfalse;
+\t\t\tci->animations[hijackedAnim].flipflop = qfalse;
+\t\t}
+\t\tci->footsteps = FOOTSTEP_NORMAL;
+\t\tVectorClear( ci->headOffset );
+\t\tci->gender = GENDER_MALE;
+\t\tci->fixedlegs = qtrue;
+\t\tci->fixedtorso = qtrue;
+\t\tCG_Printf( "HIJACKED_CGAME|Animation:staticFallback|model=%s\\n", modelName );
+\t}
+'''
+if source.count(old_animation) != 1:
+    raise SystemExit(f"expected one animation registration block, found {source.count(old_animation)}")
+source = source.replace(old_animation, new_animation, 1)
+
 for old, new in replacements:
     if source.count(old) != 1:
         raise SystemExit(f"expected one patch point, found {source.count(old)} for: {old[:80]!r}")
