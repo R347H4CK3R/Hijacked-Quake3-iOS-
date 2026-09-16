@@ -1,0 +1,490 @@
+name: Build Stabilized Hijacked IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-stabilized-ipa.yml'
+  workflow_dispatch:
+
+jobs:
+  qvms:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/hijacked-port
+
+      - name: Run patch regression tests
+        run: |
+          python3 -m pip install --disable-pip-version-check pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_patch_quake3_ios.py
+
+      - name: Build patched baseq3 QVMs
+        run: |
+          git clone https://github.com/ioquake/ioq3.git "$RUNNER_TEMP/ioq3"
+          cd "$RUNNER_TEMP/ioq3"
+          git checkout 588393618dbc82e7207c21c6ddecca229944a03a
+          python3 "$GITHUB_WORKSPACE/tools/patch_ioq3_cgame_ios.py" "$RUNNER_TEMP/ioq3"
+          grep -F 'HIJACKED_CGAME|ClientSounds:skip' code/cgame/cg_players.c
+          grep -F 'HIJACKED_CGAME|ClientSounds:complete' code/cgame/cg_players.c
+          cmake -S . -B "$RUNNER_TEMP/ioq3-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=OFF \
+            -DBUILD_SERVER=OFF \
+            -DBUILD_RENDERER_GL1=OFF \
+            -DBUILD_RENDERER_GL2=OFF \
+            -DBUILD_GAME_LIBRARIES=OFF \
+            -DBUILD_GAME_QVMS=ON \
+            -DBUILD_STANDALONE=ON
+          cmake --build "$RUNNER_TEMP/ioq3-build" -- -j2
+          mkdir -p "$RUNNER_TEMP/qvms/vm"
+          for NAME in qagame cgame ui; do
+            SRC="$(find "$RUNNER_TEMP/ioq3-build" -type f -name "$NAME.qvm" | head -1)"
+            test -s "$SRC"
+            cp "$SRC" "$RUNNER_TEMP/qvms/vm/$NAME.qvm"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stabilized-qvms
+          path: ${{ runner.temp }}/qvms
+          if-no-files-found: error
+
+  device:
+    needs: qvms
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/hijacked-port
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: stabilized-qvms
+          path: ${{ runner.temp }}/qvms
+
+      - name: Fetch pinned Quake3-iOS runtime
+        run: |
+          git clone https://github.com/tomkidd/Quake3-iOS.git "$RUNNER_TEMP/Quake3-iOS"
+          cd "$RUNNER_TEMP/Quake3-iOS"
+          git checkout f4b38931a765315fa4c7201dfbed2dd4a9b2d65c
+          test "$(git rev-parse HEAD)" = "f4b38931a765315fa4c7201dfbed2dd4a9b2d65c"
+
+      - name: Apply existing Hijacked runtime patches
+        run: |
+          PYTHONPATH=. python3 tools/patch_quake3_ios.py "$RUNNER_TEMP/Quake3-iOS"
+          PYTHONPATH=. python3 tools/patch_com_init_ios.py "$RUNNER_TEMP/Quake3-iOS"
+
+      - name: Stabilize direct-map client transition
+        run: |
+          export Q3ROOT="$RUNNER_TEMP/Quake3-iOS"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ['Q3ROOT'])
+          sys_main = root / 'Quake3/sys/sys_main.c'
+          cl_main = root / 'Quake3/client/cl_main.c'
+          cl_cgame = root / 'Quake3/client/cl_cgame.c'
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 patch point, found {count}')
+              return text.replace(old, new, 1)
+
+          s = sys_main.read_text()
+          s = replace_once(s, 'static void HijackedEngineTrace(const char *message)', 'void HijackedEngineTrace(const char *message)', 'export trace helper')
+          sys_main.write_text(s)
+
+          s = cl_main.read_text()
+          s = replace_once(
+              s,
+              '#include "../sys/sys_loadlib.h"\n',
+              '#include "../sys/sys_loadlib.h"\n\n#ifdef IOS\nextern void HijackedEngineTrace(const char *message);\n#endif\n',
+              'cl_main trace declaration',
+          )
+          old = '''void CL_StartHunkUsers( qboolean rendererOnly ) {
+\tif (!com_cl_running) {
+\t\treturn;
+\t}
+
+\tif ( !com_cl_running->integer ) {
+\t\treturn;
+\t}
+
+\tif ( !cls.rendererStarted ) {
+\t\tcls.rendererStarted = qtrue;
+\t\tCL_InitRenderer();
+\t}
+
+\tif ( rendererOnly ) {
+\t\treturn;
+\t}
+
+\tif ( !cls.soundStarted ) {
+\t\tcls.soundStarted = qtrue;
+\t\tS_Init();
+\t}
+
+\tif ( !cls.soundRegistered ) {
+\t\tcls.soundRegistered = qtrue;
+\t\tS_BeginRegistration();
+\t}
+
+\tif( com_dedicated->integer ) {
+\t\treturn;
+\t}
+
+\tif ( !cls.uiStarted ) {
+\t\tcls.uiStarted = qtrue;
+\t\tCL_InitUI();
+\t}
+}'''
+          new = '''void CL_StartHunkUsers( qboolean rendererOnly ) {
+#ifdef IOS
+\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:entered");
+#endif
+\tif (!com_cl_running) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:noComClient");
+#endif
+\t\treturn;
+\t}
+
+\tif ( !com_cl_running->integer ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:clientDisabled");
+#endif
+\t\treturn;
+\t}
+
+\tif ( !cls.rendererStarted ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Renderer:beforeInit");
+#endif
+\t\tcls.rendererStarted = qtrue;
+\t\tCL_InitRenderer();
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Renderer:afterInit");
+#endif
+\t}
+
+\tif ( rendererOnly ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:rendererOnlyComplete");
+#endif
+\t\treturn;
+\t}
+
+\tif ( !cls.soundStarted ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Sound:beforeInit");
+#endif
+\t\tcls.soundStarted = qtrue;
+\t\tS_Init();
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Sound:afterInit");
+#endif
+\t}
+
+\tif ( !cls.soundRegistered ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Sound:beforeRegistration");
+#endif
+\t\tcls.soundRegistered = qtrue;
+\t\tS_BeginRegistration();
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|Sound:afterRegistration");
+#endif
+\t}
+
+\tif( com_dedicated->integer ) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:dedicatedComplete");
+#endif
+\t\treturn;
+\t}
+
+\tif ( !cls.uiStarted ) {
+#ifdef IOS
+\t\tif ( Cvar_VariableIntegerValue("hijacked_direct") ) {
+\t\t\tHijackedEngineTrace("HIJACKED_CLIENT|UI:skippedDirectMap");
+\t\t} else
+#endif
+\t\t{
+#ifdef IOS
+\t\t\tHijackedEngineTrace("HIJACKED_CLIENT|UI:beforeInit");
+#endif
+\t\t\tcls.uiStarted = qtrue;
+\t\t\tCL_InitUI();
+#ifdef IOS
+\t\t\tHijackedEngineTrace("HIJACKED_CLIENT|UI:afterInit");
+#endif
+\t\t}
+\t}
+#ifdef IOS
+\tHijackedEngineTrace("HIJACKED_CLIENT|StartHunkUsers:complete");
+#endif
+}'''
+          s = replace_once(s, old, new, 'CL_StartHunkUsers stabilization')
+          cl_main.write_text(s)
+
+          s = cl_cgame.read_text()
+          s = replace_once(
+              s,
+              '#include "../botlib/botlib.h"\n',
+              '#include "../botlib/botlib.h"\n\n#ifdef IOS\nextern void HijackedEngineTrace(const char *message);\n#endif\n',
+              'cl_cgame trace declaration',
+          )
+          s = replace_once(
+              s,
+              '\tt1 = Sys_Milliseconds();\n',
+              '#ifdef IOS\n\tHijackedEngineTrace("HIJACKED_CGAME|Init:entered");\n#endif\n\tt1 = Sys_Milliseconds();\n',
+              'cgame init entry',
+          )
+          s = replace_once(
+              s,
+              '\tcgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );\n',
+              '#ifdef IOS\n\tHijackedEngineTrace("HIJACKED_CGAME|VMCreate:before");\n#endif\n\tcgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );\n#ifdef IOS\n\tHijackedEngineTrace(cgvm ? "HIJACKED_CGAME|VMCreate:after" : "HIJACKED_CGAME|VMCreate:failed");\n#endif\n',
+              'cgame VM create trace',
+          )
+          s = replace_once(
+              s,
+              '\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );\n',
+              '#ifdef IOS\n\tHijackedEngineTrace("HIJACKED_CGAME|CG_INIT:before");\n#endif\n\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );\n#ifdef IOS\n\tHijackedEngineTrace("HIJACKED_CGAME|CG_INIT:after");\n#endif\n',
+              'cgame CG_INIT trace',
+          )
+          s = replace_once(
+              s,
+              '\tre.EndRegistration();\n\n\t// make sure everything is paged in\n\tif (!Sys_LowPhysicalMemory()) {\n\t\tCom_TouchMemory();\n\t}\n',
+              '''#ifdef IOS
+\tHijackedEngineTrace("HIJACKED_CGAME|EndRegistration:before");
+#endif
+\tre.EndRegistration();
+#ifdef IOS
+\tHijackedEngineTrace("HIJACKED_CGAME|EndRegistration:after");
+#endif
+
+\t// The original full hunk touch is useful on desktop but needlessly spikes
+\t// launch-time memory pressure on iOS. Direct Hijacked boots skip it.
+#ifdef IOS
+\tif ( Cvar_VariableIntegerValue("hijacked_direct") ) {
+\t\tHijackedEngineTrace("HIJACKED_CGAME|TouchMemory:skippedDirectMap");
+\t} else
+#endif
+\tif (!Sys_LowPhysicalMemory()) {
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CGAME|TouchMemory:before");
+#endif
+\t\tCom_TouchMemory();
+#ifdef IOS
+\t\tHijackedEngineTrace("HIJACKED_CGAME|TouchMemory:after");
+#endif
+\t}
+''',
+              'cgame end registration and memory stabilization',
+          )
+          s = replace_once(
+              s,
+              '\tCon_ClearNotify ();\n}',
+              '\tCon_ClearNotify ();\n#ifdef IOS\n\tHijackedEngineTrace("HIJACKED_CGAME|Init:complete");\n#endif\n}',
+              'cgame init completion',
+          )
+          cl_cgame.write_text(s)
+
+          print('stabilization patches applied')
+          PY
+          grep -F 'HIJACKED_CLIENT|UI:skippedDirectMap' "$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_main.c"
+          grep -F 'HIJACKED_CGAME|TouchMemory:skippedDirectMap' "$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
+          grep -F 'HIJACKED_CGAME|CG_INIT:before' "$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
+
+      - name: Trace media registration, world load and render submission
+        run: |
+          export CL_CGAME="$RUNNER_TEMP/Quake3-iOS/Quake3/client/cl_cgame.c"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['CL_CGAME'])
+          s = p.read_text()
+
+          patches = [
+              (
+                  '\tcase CG_R_LOADWORLDMAP:\n\t\tre.LoadWorld( VMA(1) );\n\t\treturn 0; ',
+                  '\tcase CG_R_LOADWORLDMAP:\n\t\tHijackedEngineTrace("HIJACKED_RENDER|LoadWorld:before");\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:before|%s\\n", (const char *)VMA(1) );\n\t\tre.LoadWorld( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|LoadWorld:after|%s\\n", (const char *)VMA(1) );\n\t\tHijackedEngineTrace("HIJACKED_RENDER|LoadWorld:after");\n\t\treturn 0; '
+              ),
+              (
+                  '\tcase CG_R_REGISTERMODEL:\n\t\treturn re.RegisterModel( VMA(1) );',
+                  '\tcase CG_R_REGISTERMODEL: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterModel:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterModel( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterModel:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSKIN:\n\t\treturn re.RegisterSkin( VMA(1) );',
+                  '\tcase CG_R_REGISTERSKIN: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterSkin:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterSkin( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterSkin:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSHADER:\n\t\treturn re.RegisterShader( VMA(1) );',
+                  '\tcase CG_R_REGISTERSHADER: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShader:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterShader( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShader:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_REGISTERSHADERNOMIP:\n\t\treturn re.RegisterShaderNoMip( VMA(1) );',
+                  '\tcase CG_R_REGISTERSHADERNOMIP: {\n\t\tconst char *name = (const char *)VMA(1);\n\t\tqhandle_t handle;\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShaderNoMip:before|%s\\n", name ? name : "<null>" );\n\t\thandle = re.RegisterShaderNoMip( name );\n\t\tCom_Printf( "HIJACKED_MEDIA|RegisterShaderNoMip:after|%s|%d\\n", name ? name : "<null>", handle );\n\t\treturn handle;\n\t}'
+              ),
+              (
+                  '\tcase CG_R_RENDERSCENE:\n\t\tre.RenderScene( VMA(1) );\n\t\treturn 0;',
+                  '\tcase CG_R_RENDERSCENE:\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:before\\n" );\n\t\tre.RenderScene( VMA(1) );\n\t\tCom_Printf( "HIJACKED_RENDER|RenderScene:after\\n" );\n\t\treturn 0;'
+              ),
+          ]
+
+          for old, new in patches:
+              if s.count(old) != 1:
+                  raise SystemExit(f'cgame trace patch point mismatch: {old.splitlines()[0]}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Stage baseq3 placeholder
+        run: |
+          BASEQ3="$HOME/Library/Application Support/quake3/baseq3"
+          mkdir -p "$BASEQ3"
+          printf '%s\n' '// CI placeholder' > "$BASEQ3/ci-placeholder.cfg"
+
+      - name: Build unsigned arm64 app
+        run: |
+          DERIVED="$RUNNER_TEMP/DerivedData"
+          xcodebuild \
+            -project "$RUNNER_TEMP/Quake3-iOS/Quake3-iOS.xcodeproj" \
+            -scheme Quake3-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) STANDALONE' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+          APP="$(find "$DERIVED/Build/Products" -type d -path '*Release-iphoneos/Quake3-iOS.app' -print -quit)"
+          test -n "$APP"
+          test -x "$APP/Quake3-iOS"
+          printf '%s\n' "$APP" > "$RUNNER_TEMP/device-app-path.txt"
+
+      - name: Build redistributable OpenArena runtime pack
+        run: |
+          set -euo pipefail
+          OA_REPO="$RUNNER_TEMP/queep-3-arena"
+          OA_FILTERED="$RUNNER_TEMP/openarena-filtered"
+          OA_COMMIT='8ff60576be4e5c979242948951872dcc499506b2'
+          git clone --filter=blob:none --no-checkout https://github.com/Usnul/queep-3-arena.git "$OA_REPO"
+          cd "$OA_REPO"
+          git sparse-checkout init --cone
+          git sparse-checkout set assets/extracted/models assets/extracted/sound assets/extracted/textures assets/extracted/gfx assets/extracted/sprites assets/extracted/scripts assets/extracted/icons
+          git checkout "$OA_COMMIT"
+          mkdir -p "$OA_FILTERED"
+          for DIR in models sound textures gfx sprites scripts icons; do
+            if [ -d "$OA_REPO/assets/extracted/$DIR" ]; then
+              cp -R "$OA_REPO/assets/extracted/$DIR" "$OA_FILTERED/"
+            fi
+          done
+          test -s "$OA_FILTERED/models/players/sarge/lower.md3"
+          test -s "$OA_FILTERED/models/weapons2/machinegun/machinegun.md3"
+          test -s "$OA_FILTERED/sound/misc/menu1.wav"
+          cd "$OA_FILTERED"
+          /usr/bin/zip -qry "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" .
+          curl -L --fail --retry 3 https://raw.githubusercontent.com/drdator/q3edit/main/public/openarena/COPYING -o "$RUNNER_TEMP/OpenArena-COPYING.txt"
+
+      - name: Inject QVMs, runtime assets and Hijacked BSP
+        run: |
+          set -euo pipefail
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$APP/baseq3/vm" "$APP/baseq3/maps"
+          rm -f "$APP/baseq3/ci-placeholder.cfg"
+          cp "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" "$APP/baseq3/hijacked-openarena-runtime.pk3"
+          cp -R "$RUNNER_TEMP/openarena-filtered/." "$APP/baseq3/"
+          cp "$RUNNER_TEMP/OpenArena-COPYING.txt" "$APP/baseq3/OpenArena-COPYING.txt"
+          for NAME in qagame cgame ui; do
+            cp "$RUNNER_TEMP/qvms/vm/$NAME.qvm" "$APP/baseq3/vm/$NAME.qvm"
+          done
+          printf '%s\n' \
+            'seta com_introplayed "1"' \
+            'seta sv_pure "0"' \
+            'seta vm_game "1"' \
+            'seta vm_cgame "1"' \
+            'seta vm_ui "1"' \
+            'seta hijacked_direct "1"' \
+            'seta bot_enable "0"' \
+            'seta com_maxfps "60"' \
+            'seta r_fullscreen "1"' \
+            'seta r_ignoreGLErrors "1"' \
+            > "$APP/baseq3/default.cfg"
+          cp runtime/HijackedConfig.cfg "$APP/baseq3/hijacked.cfg"
+          export BSP_OUT="$APP/baseq3/maps/hijacked.bsp"
+          python3 - <<'PY'
+          import base64, hashlib, os, struct, zlib
+          from pathlib import Path
+          encoded = ''.join(Path('runtime/hijacked-device.bsp.zlib.b64').read_text().split())
+          data = zlib.decompress(base64.b64decode(encoded))
+          if data[:4] != b'IBSP':
+              raise SystemExit('bad BSP magic')
+          if struct.unpack_from('<i', data, 4)[0] != 46:
+              raise SystemExit('bad BSP version')
+          for i in range(17):
+              off, length = struct.unpack_from('<ii', data, 8 + i * 8)
+              if off < 0 or length < 0 or off + length > len(data):
+                  raise SystemExit(f'invalid BSP lump {i}')
+          out = Path(os.environ['BSP_OUT'])
+          out.write_bytes(data)
+          print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
+          PY
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/models/players/sarge/lower.md3"
+          test -s "$APP/baseq3/models/weapons2/machinegun/machinegun.md3"
+          test -s "$APP/baseq3/sound/misc/menu1.wav"
+          test -d "$APP/baseq3/scripts"
+          test -d "$APP/baseq3/textures"
+          grep -F 'hijacked_direct "1"' "$APP/baseq3/default.cfg"
+
+      - name: Validate packaged runtime surface
+        run: |
+          set -euo pipefail
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          test -x "$APP/Quake3-iOS"
+          test -s "$APP/baseq3/vm/qagame.qvm"
+          test -s "$APP/baseq3/vm/cgame.qvm"
+          test -s "$APP/baseq3/vm/ui.qvm"
+          test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/default.cfg"
+          test -s "$APP/baseq3/hijacked.cfg"
+          test -s "$APP/baseq3/models/players/sarge/lower.md3"
+          test -s "$APP/baseq3/models/players/sarge/upper.md3"
+          test -s "$APP/baseq3/models/players/sarge/head.md3"
+          test -s "$APP/baseq3/models/weapons2/machinegun/machinegun.md3"
+          test -s "$APP/baseq3/sound/misc/menu1.wav"
+          test -d "$APP/baseq3/textures"
+          test -d "$APP/baseq3/scripts"
+          /usr/bin/plutil -lint "$APP/Info.plist"
+
+      - name: Package IPA
+        run: |
+          APP="$(cat "$RUNNER_TEMP/device-app-path.txt")"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Hijacked-Quake3-iOS-stabilized-unsigned.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
+          test -s Hijacked-Quake3-iOS-stabilized-unsigned.ipa
+          unzip -t Hijacked-Quake3-iOS-stabilized-unsigned.ipa >/dev/null
+          unzip -l Hijacked-Quake3-iOS-stabilized-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l Hijacked-Quake3-iOS-stabilized-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/cgame.qvm'
+          unzip -l Hijacked-Quake3-iOS-stabilized-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/hijacked-openarena-runtime.pk3'
+          unzip -l Hijacked-Quake3-iOS-stabilized-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/lower.md3'
+          shasum -a 256 Hijacked-Quake3-iOS-stabilized-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hijacked-Quake3-iOS-stabilized-unsigned-IPA
+          path: Hijacked-Quake3-iOS-stabilized-unsigned.ipa
+          if-no-files-found: error
