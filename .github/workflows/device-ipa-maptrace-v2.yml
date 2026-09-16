@@ -1,10 +1,13 @@
 name: Hijacked Device IPA Frame Visibility
 
-# frame-visibility revision 2
+# frame-visibility revision 3
 on:
   push:
     branches: [dev/hijacked-port]
-    paths: ['.github/workflows/device-ipa-maptrace-v2.yml']
+    paths:
+      - '.github/workflows/device-ipa-maptrace-v2.yml'
+      - 'tools/patch_frame_visibility_ios.py'
+      - 'tests/test_patch_frame_visibility_ios.py'
   workflow_dispatch:
 
 jobs:
