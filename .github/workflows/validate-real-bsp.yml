@@ -1,0 +1,54 @@
+name: Validate Hijacked Real BSP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-real-bsp.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/hijacked-port
+      - name: Reconstruct and validate visual BSP
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, struct, zlib
+          from pathlib import Path
+          parts = [Path(f'runtime/hijacked-real.bsp.zlib.b64.part{i:02d}') for i in (0,2,3,4)]
+          encoded = ''.join(''.join(p.read_text().split()) for p in parts)
+          try:
+              data = zlib.decompress(base64.b64decode(encoded))
+          except Exception as exc:
+              raise SystemExit(f'REAL_BSP_RECONSTRUCT_FAILED: {exc}')
+          if data[:4] != b'IBSP' or struct.unpack_from('<i', data, 4)[0] != 46:
+              raise SystemExit('REAL_BSP_BAD_HEADER')
+          print('REAL_BSP_OK', len(data), hashlib.sha256(data).hexdigest())
+          for i in range(17):
+              off, length = struct.unpack_from('<ii', data, 8+i*8)
+              if off < 0 or length < 0 or off+length > len(data):
+                  raise SystemExit(f'bad lump {i}: {off} {length}')
+              print('LUMP', i, off, length)
+          vo, vl = struct.unpack_from('<ii', data, 8+10*8)
+          mo, ml = struct.unpack_from('<ii', data, 8+11*8)
+          fo, fl = struct.unpack_from('<ii', data, 8+13*8)
+          nv, nm, nf = vl//44, ml//4, fl//104
+          print('COUNTS', nv, nm, nf)
+          bad = 0
+          for fi in range(nf):
+              o=fo+fi*104
+              shader,fog,stype,fv,nvface,fi0,nidx,lm = struct.unpack_from('<8i',data,o)
+              pw,ph=struct.unpack_from('<2i',data,o+96)
+              ok=(stype in (1,2,3,4) and 0<=fv<=nv and 0<=nvface<=nv-fv and 0<=fi0<=nm and 0<=nidx<=nm-fi0 and nidx%3==0)
+              if stype==2: ok = ok and pw>0 and ph>0 and pw*ph==nvface
+              if not ok:
+                  bad += 1
+                  if bad <= 20: print('BADFACE',fi,shader,fog,stype,fv,nvface,fi0,nidx,lm,pw,ph)
+          print('BADFACE_COUNT',bad)
+          if bad: raise SystemExit('REAL_BSP_INVALID_SURFACES')
+          PY
