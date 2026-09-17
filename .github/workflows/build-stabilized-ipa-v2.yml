@@ -155,26 +155,63 @@ jobs:
       - name: Build redistributable OpenArena runtime pack
         run: |
           set -euo pipefail
-          OA_REPO="$RUNNER_TEMP/queep-3-arena"
+          OA_ZIP="$RUNNER_TEMP/openarena-0.8.8.zip"
+          OA_EXTRACT="$RUNNER_TEMP/openarena-0.8.8"
           OA_FILTERED="$RUNNER_TEMP/openarena-filtered"
-          OA_COMMIT='8ff60576be4e5c979242948951872dcc499506b2'
-          git clone --filter=blob:none --no-checkout https://github.com/Usnul/queep-3-arena.git "$OA_REPO"
-          cd "$OA_REPO"
-          git sparse-checkout init --cone
-          git sparse-checkout set assets/extracted/models assets/extracted/sound assets/extracted/textures assets/extracted/gfx assets/extracted/sprites assets/extracted/scripts assets/extracted/icons
-          git checkout "$OA_COMMIT"
-          mkdir -p "$OA_FILTERED"
-          for DIR in models sound textures gfx sprites scripts icons; do
-            if [ -d "$OA_REPO/assets/extracted/$DIR" ]; then
-              cp -R "$OA_REPO/assets/extracted/$DIR" "$OA_FILTERED/"
-            fi
+          OA_LAYER="$RUNNER_TEMP/openarena-layer"
+          OA_SHA256='5a8faf7f5b51f351b0a1618c06b6b98a5f1a6758f1d39818de2c87df2a0bac4a'
+          OA_URL='https://downloads.sourceforge.net/project/oarena/openarena-0.8.8.zip'
+
+          rm -rf "$OA_EXTRACT" "$OA_FILTERED" "$OA_LAYER"
+          curl -L --fail --retry 5 --retry-delay 3 "$OA_URL" -o "$OA_ZIP"
+          printf '%s  %s\n' "$OA_SHA256" "$OA_ZIP" | shasum -a 256 -c -
+          mkdir -p "$OA_EXTRACT" "$OA_FILTERED" "$OA_LAYER"
+          /usr/bin/unzip -q "$OA_ZIP" -d "$OA_EXTRACT"
+
+          BASEOA="$(find "$OA_EXTRACT" -type d -name baseoa -print -quit)"
+          test -n "$BASEOA"
+          test -d "$BASEOA"
+
+          PAKS=(
+            pak0.pk3
+            pak1-maps.pk3
+            pak2-players.pk3
+            pak4-textures.pk3
+            pak5-TA.pk3
+            pak6-misc.pk3
+            pak6-patch085.pk3
+            pak6-patch088.pk3
+          )
+          for PAK in "${PAKS[@]}"; do
+            test -s "$BASEOA/$PAK"
+            rm -rf "$OA_LAYER"
+            mkdir -p "$OA_LAYER"
+            /usr/bin/unzip -oq "$BASEOA/$PAK" -d "$OA_LAYER"
+            for DIR in models sound textures gfx sprites scripts icons; do
+              if [ -d "$OA_LAYER/$DIR" ]; then
+                mkdir -p "$OA_FILTERED/$DIR"
+                rsync -a "$OA_LAYER/$DIR/" "$OA_FILTERED/$DIR/"
+              fi
+            done
           done
+
           test -s "$OA_FILTERED/models/players/sarge/lower.md3"
+          test -s "$OA_FILTERED/models/players/sarge/upper.md3"
+          test -s "$OA_FILTERED/models/players/sarge/head.md3"
           test -s "$OA_FILTERED/models/weapons2/machinegun/machinegun.md3"
           test -s "$OA_FILTERED/sound/misc/menu1.wav"
+          test -d "$OA_FILTERED/scripts"
+          test -d "$OA_FILTERED/textures"
+
+          COPYING="$(find "$OA_EXTRACT" -type f -name COPYING -print -quit)"
+          test -n "$COPYING"
+          test -s "$COPYING"
+          cp "$COPYING" "$RUNNER_TEMP/OpenArena-COPYING.txt"
+
           cd "$OA_FILTERED"
           /usr/bin/zip -qry "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" .
-          curl -L --fail --retry 3 https://raw.githubusercontent.com/drdator/q3edit/main/public/openarena/COPYING -o "$RUNNER_TEMP/OpenArena-COPYING.txt"
+          test -s "$RUNNER_TEMP/hijacked-openarena-runtime.pk3"
+          /usr/bin/unzip -t "$RUNNER_TEMP/hijacked-openarena-runtime.pk3" >/dev/null
 
       - name: Inject QVMs, runtime assets and Hijacked BSP
         run: |
@@ -220,11 +257,15 @@ jobs:
           print(f'BSP bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}')
           PY
           test -s "$APP/baseq3/maps/hijacked.bsp"
+          test -s "$APP/baseq3/vm/qagame.qvm"
+          test -s "$APP/baseq3/vm/cgame.qvm"
+          test -s "$APP/baseq3/vm/ui.qvm"
           test -s "$APP/baseq3/models/players/sarge/lower.md3"
           test -s "$APP/baseq3/models/players/sarge/upper.md3"
           test -s "$APP/baseq3/models/players/sarge/head.md3"
           test -s "$APP/baseq3/models/weapons2/machinegun/machinegun.md3"
           test -s "$APP/baseq3/sound/misc/menu1.wav"
+          test -s "$APP/baseq3/OpenArena-COPYING.txt"
           test -d "$APP/baseq3/scripts"
           test -d "$APP/baseq3/textures"
           grep -F 'hijacked_direct "1"' "$APP/baseq3/default.cfg"
@@ -242,8 +283,15 @@ jobs:
           test -s Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa
           unzip -t Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa >/dev/null
           unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/maps/hijacked.bsp'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/qagame.qvm'
           unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/cgame.qvm'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/vm/ui.qvm'
           unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/lower.md3'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/upper.md3'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/players/sarge/head.md3'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/models/weapons2/machinegun/machinegun.md3'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/sound/misc/menu1.wav'
+          unzip -l Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa | grep -F 'Payload/Quake3-iOS.app/baseq3/OpenArena-COPYING.txt'
           shasum -a 256 Hijacked-Quake3-iOS-stabilized-v2-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
